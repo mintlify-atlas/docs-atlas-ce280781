@@ -1,0 +1,49 @@
+---
+title: "What is Lynx?"
+description: "Lynx is a self-hosted AI code review tool that reviews GitHub and GitLab PRs using your own LLM API keys — your code never leaves your server."
+---
+
+Lynx is an open-source, self-hosted AI code review platform. It integrates with GitHub (via a GitHub App) and GitLab (cloud and self-hosted) to automatically post review comments on every pull request or merge request. Unlike managed code review services, Lynx runs entirely on your own infrastructure and uses API keys you provide — so your code never touches a third-party server beyond the LLM provider you already trust.
+
+<Tip>
+  Because Lynx uses your own API keys, you stay in full control of cost, provider choice, and data residency. Switch from OpenAI to Gemini or Claude at any time without migrating to a new service.
+</Tip>
+
+## How it works
+
+When a developer opens a pull request, your Git platform sends a webhook event to Lynx. Lynx fetches the diff, forwards it to each configured LLM provider in parallel, and posts the resulting reviews as comments directly on the PR. You can also trigger a review manually by commenting `/review` on any open PR.
+
+All LLM API keys are stored encrypted at rest using Fernet encryption, and webhook payloads are verified using signature secrets before processing.
+
+## Key capabilities
+
+**GitHub App and GitLab support** — Install Lynx as a GitHub App to get automatic webhook registration and OAuth login. For GitLab, configure a webhook manually on any project; both gitlab.com and self-hosted instances are supported.
+
+**OpenAI, Gemini, and Claude** — Add API keys for one or more providers. Each configured provider participates in every review, giving you independent perspectives on the same diff.
+
+**Multi-agent reviews** — When multiple LLM providers are configured, Lynx runs them in parallel and posts each review as a separate comment. You get distinct viewpoints without extra latency.
+
+**`/review` command** — Comment `/review` on any PR to trigger an on-demand review without opening a new pull request.
+
+**Review templates** — Define a custom prompt template to focus the review on what matters for your codebase — security, performance, style, or anything else.
+
+**REST API** — Every action available in the dashboard is also available via a clean REST API, so you can build your own integrations or automate review workflows.
+
+## Why Lynx instead of a managed service?
+
+Most hosted AI code review tools send your code to their own servers for processing. Lynx inverts that model: your code goes directly from your Git platform to the LLM provider you chose, routed through a service running on hardware you control. There is no Lynx cloud, no usage dashboard on someone else's server, and no vendor lock-in.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Lynx running locally with Docker Compose in a few minutes.
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment">
+    Deploy Lynx to production with HTTPS via Traefik.
+  </Card>
+  <Card title="LLM providers" icon="robot" href="/configuration/llm-providers">
+    Configure OpenAI, Gemini, or Claude — or all three at once.
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference/overview">
+    Explore the full REST API for custom integrations and dashboards.
+  </Card>
+</CardGroup>

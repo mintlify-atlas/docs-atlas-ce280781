@@ -1,0 +1,220 @@
+---
+title: "Custom review prompt templates in Lynx"
+description: "Create named prompt templates to tailor what Lynx focuses on during reviews — security, performance, or any custom focus — and set one as your default."
+---
+
+By default, Lynx uses a built-in system prompt that instructs the LLM to look for critical bugs, security vulnerabilities, performance problems, and code smells. Templates let you replace that prompt with any instructions you choose. You can create multiple templates for different purposes and designate one as the default that Lynx uses for every review.
+
+## The default system prompt
+
+When no custom template is active, Lynx uses the following prompt. Every custom template replaces this prompt entirely.
+
+```text
+You are a code reviewer. Analyze this pull request diff and provide a concise review.
+
+Focus on:
+1. Critical bugs and logic errors
+2. Security vulnerabilities (SQL injection, XSS, auth issues)
+3. Performance problems (N+1 queries, inefficient algorithms)
+4. Code smells that will cause maintainability issues
+
+Be direct and concise. Only mention serious issues. Don't comment on style or formatting.
+
+Format your response as a markdown list with clear severity indicators:
+- 🔴 CRITICAL: Must fix before merge
+- 🟡 WARNING: Should fix soon
+- 🔵 SUGGESTION: Consider improving
+
+Here's the diff:
+
+{diff}
+
+Provide your review:
+```
+
+<Warning>
+  Every template — including the system default — must contain the `{diff}` placeholder. Lynx substitutes the actual PR diff at this position before sending the prompt to the LLM. Creating or updating a template without `{diff}` returns HTTP 400:
+
+  ```json
+  {
+    "detail": "Template content must include {diff} placeholder for the PR diff"
+  }
+  ```
+</Warning>
+
+## Template fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Auto-assigned primary key |
+| `name` | string | Unique name per user. Duplicate names are rejected with HTTP 400. |
+| `content` | text | Full prompt text. Must contain `{diff}`. |
+| `is_default` | boolean | Whether this template is used for new reviews. Only one template can be default at a time. |
+| `created_at` | datetime | ISO 8601 timestamp |
+| `updated_at` | datetime | ISO 8601 timestamp, updated on every PATCH |
+
+## Managing templates
+
+### Create a template
+
+```http
+POST /api/v1/templates
+Content-Type: application/json
+
+{
+  "name": "security-audit",
+  "content": "You are a security-focused code reviewer. ...\n\n{diff}\n\nProvide your review:"
+}
+```
+
+New templates are created with `is_default: false`. Set a template as default in a separate call.
+
+### List all templates
+
+```http
+GET /api/v1/templates
+```
+
+Returns all templates for the authenticated user, ordered with the default first, then by creation date descending.
+
+### Get the active default
+
+```http
+GET /api/v1/templates/default
+```
+
+Returns the current default template. If no custom template is set as default, returns the built-in system prompt with `"id": null` and `"name": "System Default"`.
+
+### Update a template
+
+```http
+PATCH /api/v1/templates/{template_id}
+Content-Type: application/json
+
+{
+  "name": "security-audit-v2",
+  "content": "Updated prompt text containing {diff}"
+}
+```
+
+Both `name` and `content` are optional. Omit either field to leave it unchanged. If you update `content`, the `{diff}` requirement still applies.
+
+### Delete a template
+
+```http
+DELETE /api/v1/templates/{template_id}
+```
+
+Returns `{"status": "success"}`. Deleting the active default does not automatically fall back to another template; Lynx reverts to the system default prompt.
+
+### Set a template as default
+
+```http
+POST /api/v1/templates/set-default
+Content-Type: application/json
+
+{
+  "template_id": 3
+}
+```
+
+This atomically unsets any existing default and marks the specified template as the new default. Lynx uses this template for all subsequent reviews until you change it.
+
+### Reset to the system default
+
+```http
+POST /api/v1/templates/reset-default
+```
+
+Removes the `is_default` flag from all user templates without deleting them. Lynx falls back to the built-in system prompt for new reviews.
+
+## Template uniqueness
+
+Template names must be unique per user. Attempting to create or rename a template to a name already in use returns:
+
+```json
+{
+  "detail": "Template with name 'security-audit' already exists"
+}
+```
+
+## Example templates
+
+<Tabs>
+  <Tab title="Security audit">
+    Use this template for repositories where security is the primary concern — APIs, authentication services, or any code handling user data.
+
+    ```text
+    You are a security-focused code reviewer. Your only job is to find security vulnerabilities.
+
+    Examine the diff for:
+    - Injection flaws: SQL, LDAP, command, template injection
+    - Broken authentication: weak tokens, missing expiry, insecure defaults
+    - Sensitive data exposure: secrets in code, unencrypted storage, overly verbose errors
+    - Broken access control: missing authorisation checks, IDOR, privilege escalation
+    - Security misconfiguration: open CORS, missing security headers, debug endpoints left on
+    - XSS: reflected, stored, DOM-based
+    - Insecure deserialisation
+    - Using components with known vulnerabilities
+
+    Do not comment on code style, test coverage, or non-security issues.
+
+    Format findings as:
+    - 🔴 CRITICAL: [vulnerability type] — [exact location and fix]
+    - 🟡 WARNING: [potential weakness] — [recommendation]
+
+    Here is the diff:
+
+    {diff}
+
+    Security findings:
+    ```
+  </Tab>
+  <Tab title="Performance review">
+    Use this template for data-heavy services, background workers, or any code where latency and resource usage matter.
+
+    ```text
+    You are a performance-focused code reviewer. Identify changes that will cause
+    latency regressions, excessive memory use, or poor scalability.
+
+    Focus on:
+    - N+1 query patterns: loops that issue one database query per iteration
+    - Missing indexes implied by new query predicates
+    - Unbounded queries: SELECT without LIMIT on large tables
+    - Synchronous I/O inside async contexts
+    - Unnecessary data loading: fetching full objects when only a field is needed
+    - Inefficient algorithms: O(n²) or worse where a better approach exists
+    - Memory leaks: resources opened but not closed, unbounded caches
+    - Redundant computation inside hot paths
+
+    Ignore issues that are not performance-related.
+
+    Format findings as:
+    - 🔴 CRITICAL: [issue] — estimated impact and recommended fix
+    - 🟡 WARNING: [issue] — lower-priority but worth addressing
+    - 🔵 SUGGESTION: [micro-optimisation] — consider if this path is hot
+
+    Diff to review:
+
+    {diff}
+
+    Performance findings:
+    ```
+  </Tab>
+</Tabs>
+
+## How templates are applied
+
+When a review is triggered, Lynx looks up the user's default template before making any LLM calls:
+
+```python
+# From app/api/services/review.py
+default_template = (
+    db.query(Template)
+    .filter(Template.user_id == user_id, Template.is_default == True)
+    .first()
+)
+template_content = default_template.content if default_template else None
+```
+
+The selected template content (or `None` for the system default) is passed to every active LLM provider. All providers in a multi-agent review use the same template.

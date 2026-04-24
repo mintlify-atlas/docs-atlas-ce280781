@@ -1,0 +1,164 @@
+---
+title: 'Authenticate with Lynx via OAuth'
+description: 'Authenticate with the Lynx API using GitHub or GitLab OAuth. A successful login sets an httponly session cookie used for all protected endpoints.'
+---
+
+Lynx authenticates users through OAuth with GitHub or GitLab. You don't pass credentials directly to the API — instead, you complete an OAuth flow in a browser, which results in an `httponly` session cookie being set. That cookie must be included with all subsequent requests to protected endpoints.
+
+The cookie is valid for **7 days**. After expiry, repeat the login flow to obtain a new session.
+
+<Info>
+  The callback endpoints (`/auth/github/callback` and `/auth/gitlab/callback`) are called automatically by GitHub and GitLab during the OAuth redirect flow. You do not call them directly.
+</Info>
+
+---
+
+## GET /auth/github
+
+Redirects the user to GitHub's OAuth authorization page. Navigate to this URL in a browser to begin the login flow.
+
+After the user authorizes the Lynx app on GitHub, they are redirected to `/auth/github/callback`, which sets the session cookie and redirects to the dashboard.
+
+```bash
+curl -L https://yourdomain.com/api/v1/auth/github
+```
+
+**Scopes requested:** `read:user`, `user:email`
+
+---
+
+## GET /auth/github/callback
+
+Called automatically by GitHub after the user completes OAuth authorization. Do not call this endpoint directly.
+
+<ParamField query="code" type="string" required>
+  The authorization code provided by GitHub. This is appended automatically by GitHub during the redirect.
+</ParamField>
+
+On success, this endpoint:
+- Creates or updates the user record in the database
+- Sets an `httponly` session cookie (`lynx_session`) with a 7-day expiry
+- Redirects to your frontend dashboard
+
+On failure, redirects to `/auth-error?provider=GitHub`.
+
+---
+
+## GET /auth/gitlab
+
+Redirects the user to GitLab's OAuth authorization page. Requires GitLab OAuth to be configured in your Lynx backend (via `GITLAB_CLIENT_ID` and related environment variables).
+
+```bash
+curl -L https://yourdomain.com/api/v1/auth/gitlab
+```
+
+Returns `501 Not Implemented` if GitLab OAuth is not configured.
+
+**Scopes requested:** `read_user`, `api`
+
+---
+
+## GET /auth/gitlab/callback
+
+Called automatically by GitLab after the user completes OAuth authorization. Do not call this endpoint directly.
+
+<ParamField query="code" type="string" required>
+  The authorization code provided by GitLab. This is appended automatically by GitLab during the redirect.
+</ParamField>
+
+On success, this endpoint:
+- Creates or updates the user record, storing the encrypted GitLab access and refresh tokens
+- Sets an `httponly` session cookie (`lynx_session`) with a 7-day expiry
+- Redirects to your frontend dashboard
+
+On failure, redirects to `/auth-error?provider=GitLab`.
+
+---
+
+## GET /auth/me
+
+Returns the profile of the currently authenticated user.
+
+**Authentication required:** yes
+
+```bash
+curl https://yourdomain.com/api/v1/auth/me \
+  -b "lynx_session=<your-session-cookie>"
+```
+
+### Response
+
+```json
+{
+  "id": 1,
+  "github_username": "octocat",
+  "github_id": 583231,
+  "github_image_url": "https://avatars.githubusercontent.com/u/583231",
+  "gitlab_username": null,
+  "gitlab_id": null,
+  "gitlab_image_url": null,
+  "email": "octocat@github.com",
+  "created_at": "2024-01-15T10:30:00+00:00"
+}
+```
+
+<ResponseField name="id" type="integer" required>
+  Internal Lynx user ID.
+</ResponseField>
+
+<ResponseField name="github_username" type="string">
+  The user's GitHub login handle. `null` if the user has not connected GitHub.
+</ResponseField>
+
+<ResponseField name="github_id" type="integer">
+  The user's numeric GitHub user ID. `null` if GitHub is not connected.
+</ResponseField>
+
+<ResponseField name="github_image_url" type="string">
+  URL of the user's GitHub avatar. `null` if GitHub is not connected.
+</ResponseField>
+
+<ResponseField name="gitlab_username" type="string">
+  The user's GitLab username. `null` if GitLab is not connected.
+</ResponseField>
+
+<ResponseField name="gitlab_id" type="integer">
+  The user's numeric GitLab user ID. `null` if GitLab is not connected.
+</ResponseField>
+
+<ResponseField name="gitlab_image_url" type="string">
+  URL of the user's GitLab avatar. `null` if GitLab is not connected.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  The user's email address, sourced from the OAuth provider. May be `null` if the provider did not supply one.
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp of when the user account was created.
+</ResponseField>
+
+---
+
+## POST /auth/logout
+
+Clears the session cookie and ends the authenticated session.
+
+**Authentication required:** yes
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/auth/logout \
+  -b "lynx_session=<your-session-cookie>"
+```
+
+### Response
+
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation string. Always `"Logged out successfully"`.
+</ResponseField>

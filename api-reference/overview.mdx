@@ -1,0 +1,103 @@
+---
+title: 'Lynx REST API overview'
+description: 'The Lynx REST API lets you manage reviews, settings, templates, and webhooks. All responses are JSON over HTTPS from your self-hosted instance.'
+---
+
+The Lynx REST API is a JSON HTTP API served from your self-hosted backend. It provides endpoints for querying code review history, managing LLM provider credentials, creating review prompt templates, and registering webhooks for GitHub and GitLab. All endpoints are scoped to the authenticated user — Lynx has no concept of shared organizations or team-level access at the API level.
+
+## Base URL
+
+All API endpoints are relative to:
+
+```
+https://yourdomain.com/api/v1
+```
+
+The prefix is controlled by the `api_prefix` setting in your backend configuration (default: `/api/v1`) and your `backend_url`.
+
+## Authentication
+
+Lynx uses **session cookies** for authentication. There are no API tokens or bearer tokens.
+
+To authenticate:
+
+1. Visit `GET /auth/github` or `GET /auth/gitlab` in your browser to complete the OAuth flow.
+2. On success, Lynx sets an `httponly` session cookie valid for **7 days**.
+3. Include that cookie on all subsequent API requests using `-b "lynx_session=..."` with curl or via the browser session automatically.
+
+<Note>
+  The session cookie is `httponly` and `secure` (in production). You cannot read it from JavaScript. Browser-based requests from the Lynx frontend are handled automatically.
+</Note>
+
+Requests to protected endpoints without a valid session cookie return `401 Unauthorized`.
+
+## Response format
+
+All responses are JSON. Successful responses return the relevant data object or array directly. Error responses follow the format:
+
+```json
+{
+  "detail": "Human-readable error message"
+}
+```
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Success |
+| `400` | Bad request — invalid parameters or body |
+| `401` | Unauthorized — missing or expired session cookie |
+| `403` | Forbidden — authenticated but not allowed (e.g., wrong user, invalid webhook signature) |
+| `404` | Not found — resource doesn't exist or belongs to another user |
+| `500` | Server error |
+| `501` | Not implemented — feature not configured (e.g., GitLab OAuth disabled) |
+
+## Available endpoint groups
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api-reference/authentication">
+    Log in via GitHub or GitLab OAuth, retrieve your user profile, and log out.
+  </Card>
+  <Card title="Reviews & stats" icon="chart-bar" href="/api-reference/reviews">
+    List and filter code reviews, fetch review details, and query usage statistics.
+  </Card>
+  <Card title="Settings (API keys)" icon="gear" href="/api-reference/settings">
+    Add, remove, toggle, and bulk-configure LLM provider credentials.
+  </Card>
+  <Card title="Templates" icon="file-lines" href="/api-reference/templates">
+    Create and manage custom review prompt templates with full CRUD support.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/api-reference/webhooks">
+    Receive GitHub and GitLab events to trigger automatic AI code reviews.
+  </Card>
+  <Card title="Notifications" icon="bell" href="/api-reference/notifications">
+    List review notifications and stream real-time updates via Server-Sent Events.
+  </Card>
+</CardGroup>
+
+## Pagination
+
+The reviews endpoint supports cursor-free offset pagination via query parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | integer | `1` | Page number (minimum: 1) |
+| `limit` | integer | `10` | Items per page (minimum: 1, maximum: 100) |
+
+Paginated responses include a `pagination` object:
+
+```json
+{
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 42,
+    "pages": 5
+  }
+}
+```
+
+## Rate limiting
+
+Lynx does not configure any rate limiting on API endpoints by default. If you need rate limiting, add it at your reverse proxy layer (e.g., nginx or Caddy).

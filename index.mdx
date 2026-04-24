@@ -1,97 +1,63 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Lynx: Sharp-eyed AI code review for pull requests"
+description: "Lynx is a self-hosted AI code review platform that reviews GitHub and GitLab PRs with OpenAI, Gemini, or Claude. Your code never leaves your infrastructure."
 ---
 
-## Setting up
+Lynx brings AI-powered code review directly to your pull requests and merge requests — without sending your code to a third-party service. Connect your own OpenAI, Gemini, or Claude API keys, install the GitHub App or configure a GitLab webhook, and every PR gets a thorough review automatically posted as a comment.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Lynx running locally and reviewing your first pull request in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Deployment" icon="server" href="/deployment">
+    Deploy Lynx to production with Docker and optional Traefik reverse proxy.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="LLM Providers" icon="robot" href="/configuration/llm-providers">
+    Connect OpenAI, Gemini, or Claude — or all three for multi-agent reviews.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Explore the full REST API to build your own integrations and dashboards.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How Lynx works
 
-Everything you need to create world-class documentation.
+Lynx runs as a self-hosted service alongside your existing Git platform. When a developer opens a pull request, Lynx receives a webhook event, fetches the diff, and sends it to each of your configured LLM providers simultaneously. The resulting reviews are posted back as comments on the PR.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Deploy Lynx">
+    Run Lynx with Docker Compose on your own server. Choose between a local development setup or a production deployment with HTTPS via Traefik.
+  </Step>
+  <Step title="Connect your Git platform">
+    Install the Lynx GitHub App on your repositories, or configure a GitLab webhook to start receiving PR/MR events.
+  </Step>
+  <Step title="Add your LLM API keys">
+    Log in to the Lynx dashboard and add API keys for OpenAI, Gemini, and/or Claude. Keys are encrypted at rest using Fernet encryption.
+  </Step>
+  <Step title="Open a pull request">
+    Lynx automatically posts AI review comments on every new PR. You can also trigger a manual review by commenting `/review` on any PR.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Key features
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Your data stays with you" icon="shield-halved" href="/self-hosting/docker">
+    Code is reviewed on your server. Nothing is sent to Lynx or any intermediary.
+  </Card>
+  <Card title="Multi-agent reviews" icon="users" href="/features/multi-agent">
+    Run OpenAI, Gemini, and Claude in parallel for independent review perspectives.
+  </Card>
+  <Card title="GitHub & GitLab" icon="code-branch" href="/configuration/github-app">
+    First-class support for GitHub via App installation and GitLab (cloud and self-hosted).
+  </Card>
+  <Card title="Custom review templates" icon="file-pen" href="/features/review-templates">
+    Tailor the review prompt to focus on what matters most for your codebase.
+  </Card>
+  <Card title="Review history & stats" icon="chart-bar" href="/features/code-review">
+    Track every review, token usage, and cost from the built-in dashboard.
+  </Card>
+  <Card title="Manual trigger" icon="comment" href="/features/code-review">
+    Post `/review` as a comment on any PR to trigger an on-demand review.
+  </Card>
+</CardGroup>

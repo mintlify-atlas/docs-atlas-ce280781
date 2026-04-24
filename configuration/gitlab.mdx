@@ -1,0 +1,99 @@
+---
+title: "Connect Lynx to GitLab for MR reviews"
+description: "Configure a GitLab OAuth application and repository webhooks so Lynx can automatically review merge requests and respond to /review commands."
+---
+
+Lynx connects to GitLab through two mechanisms: an OAuth application that lets users sign in with their GitLab account, and per-repository webhooks that notify Lynx when a merge request is opened or a `/review` comment is posted. Follow the steps below to set both up.
+
+<Steps>
+
+<Step title="Create a GitLab OAuth application">
+  Go to your GitLab account and navigate to **Settings > Applications** (for a personal OAuth app) or **Group Settings > Applications** (for a group-level app).
+
+  Click **Add new application** and fill in:
+
+  - **Name**: `Lynx Code Review` (or any name)
+  - **Redirect URI**: `https://yourdomain.com/api/v1/auth/gitlab/callback`
+  - **Confidential**: checked
+
+  <Info>
+    If you want all members of an organization to be able to log in, create the application at the group level rather than the personal account level.
+  </Info>
+</Step>
+
+<Step title="Select the required OAuth scopes">
+  Under **Scopes**, enable:
+
+  | Scope | Purpose |
+  |---|---|
+  | `read_user` | Read the authenticated user's profile and username |
+  | `api` | Access GitLab APIs on behalf of the user (required for posting MR comments) |
+
+  Click **Save application**.
+</Step>
+
+<Step title="Copy the client credentials">
+  After saving, GitLab displays the **Application ID** and **Secret**. Add them to your `.env`:
+
+  ```bash
+  GITLAB_CLIENT_ID=your-application-id
+  GITLAB_CLIENT_SECRET=your-secret
+  ```
+
+  Users who sign in with GitLab are redirected through `https://yourdomain.com/api/v1/auth/gitlab/callback` after authorization. Lynx stores the resulting access and refresh tokens (encrypted with `ENCRYPTION_KEY`) and uses them to post review comments on MRs.
+</Step>
+
+<Step title="Set up a webhook on each repository">
+  For every GitLab project you want Lynx to review, go to the project's **Settings > Webhooks** and click **Add new webhook**.
+
+  Set:
+
+  - **URL**: `https://yourdomain.com/api/v1/webhooks/gitlab`
+  - **Secret token**: a random string you generate (e.g. `openssl rand -hex 32`)
+  - **SSL verification**: enabled (recommended)
+
+  Copy the secret token and add it to your `.env`:
+
+  ```bash
+  GITLAB_WEBHOOK_SECRET=your-random-secret-here
+  ```
+
+  <Warning>
+    The webhook URL must be publicly reachable by your GitLab instance. For self-hosted GitLab on a private network, ensure network routing allows outbound connections to your Lynx backend.
+  </Warning>
+</Step>
+
+<Step title="Subscribe to the required webhook events">
+  On the same webhook configuration page, enable:
+
+  | Event | Trigger |
+  |---|---|
+  | **Merge request events** | Automatically reviews an MR when it is opened |
+  | **Comments** | Allows triggering a review via the `/review` command on an MR |
+
+  Click **Add webhook** to save.
+
+  <Note>
+    Lynx processes `merge_request` events with action `open` and `note` events on merge requests. All other event types are acknowledged and ignored.
+  </Note>
+</Step>
+
+<Step title="Configure a self-hosted GitLab instance (optional)">
+  If you are running a self-hosted GitLab server rather than using gitlab.com, set the `GITLAB_URL` variable to your instance's base URL:
+
+  ```bash
+  GITLAB_URL=https://gitlab.example.com
+  ```
+
+  Lynx uses this URL to build OAuth authorization, token exchange, and user API endpoints. The default value is `https://gitlab.com`, which is correct for gitlab.com users.
+</Step>
+
+</Steps>
+
+## How the /review command works
+
+Lynx listens for `note` events on the GitLab webhook endpoint `POST /api/v1/webhooks/gitlab`. When a note (comment) is created on a merge request and its body starts with `/review` (case-insensitive), Lynx queues a review for that MR in the background.
+
+GitLab webhooks are verified using the `X-Gitlab-Token` header, which must match `GITLAB_WEBHOOK_SECRET`. Requests with a missing or incorrect token are rejected with a 403.
+
+The review runs using the LLM API keys configured for the authenticated user who opened the MR. If no user matching the MR author's GitLab username exists in Lynx's database, the webhook returns a 404 and no review is posted. Automatic reviews on MR open and manual `/review` reviews use the same review pipeline.

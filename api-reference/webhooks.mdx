@@ -1,0 +1,152 @@
+---
+title: 'Webhook endpoints for GitHub and GitLab'
+description: 'Configure GitHub and GitLab webhooks to send pull request and comment events to Lynx, triggering automatic AI code reviews on new or commented PRs.'
+---
+
+Lynx exposes two webhook receiver endpoints — one for GitHub and one for GitLab. You register these URLs in your repository or organization settings, and the respective platform sends events to Lynx when pull requests are opened or when a `/review` comment is posted.
+
+<Warning>
+  Both endpoints verify the authenticity of incoming requests using a shared secret. Requests with a missing or invalid signature/token are rejected immediately with a `403 Forbidden` response. Always configure the secret on both sides.
+</Warning>
+
+---
+
+## Webhook URLs
+
+Configure these URLs when setting up your webhook in GitHub or GitLab:
+
+| Platform | Webhook URL |
+|----------|-------------|
+| GitHub | `https://yourdomain.com/api/v1/webhooks/github` |
+| GitLab | `https://yourdomain.com/api/v1/webhooks/gitlab` |
+
+---
+
+## POST /webhooks/github
+
+Receives events from GitHub. Lynx handles two event types: automatic reviews on new pull requests, and manual reviews triggered by a `/review` comment.
+
+### Headers
+
+<ParamField header="X-Hub-Signature-256" type="string" required>
+  HMAC-SHA256 signature of the raw request body, prefixed with `sha256=`. GitHub computes this using the `GITHUB_WEBHOOK_SECRET` you configure in both GitHub and your Lynx environment. Requests with a missing or invalid signature return `403`.
+</ParamField>
+
+<ParamField header="X-Github-Event" type="string" required>
+  The GitHub event type (e.g., `pull_request`, `issue_comment`). Set automatically by GitHub.
+</ParamField>
+
+### Handled events
+
+**`pull_request` — action `opened`**
+
+Triggered when a new pull request is opened. Lynx queues an automatic review in the background.
+
+The sender's GitHub username must match a registered Lynx user. If no matching user is found, Lynx returns `404`.
+
+**`issue_comment` — action `created`**
+
+Triggered when someone posts a comment on a pull request. Lynx only acts if the comment body starts with `/review` (case-insensitive). When matched, a review is queued in the background.
+
+All other events and actions are acknowledged but ignored.
+
+### Setting up the webhook in GitHub
+
+<Steps>
+  <Step title="Go to your repository or organization settings">
+    Navigate to **Settings → Webhooks → Add webhook** in your GitHub repository or organization.
+  </Step>
+  <Step title="Configure the webhook">
+    - **Payload URL:** `https://yourdomain.com/api/v1/webhooks/github`
+    - **Content type:** `application/json`
+    - **Secret:** the value of your `GITHUB_WEBHOOK_SECRET` environment variable
+  </Step>
+  <Step title="Select events">
+    Choose **Let me select individual events** and enable **Pull requests** and **Issue comments**.
+  </Step>
+</Steps>
+
+### Response
+
+```json
+{ "status": "queued for review" }
+```
+
+or, for events Lynx does not act on:
+
+```json
+{ "status": "event_ignored" }
+```
+
+<ResponseField name="status" type="string">
+  Either `"queued for review"` (review was triggered) or `"event_ignored"` (event type or action not handled by Lynx).
+</ResponseField>
+
+---
+
+## POST /webhooks/gitlab
+
+Receives events from GitLab. Lynx handles automatic reviews on new merge requests and manual reviews triggered by a `/review` comment.
+
+### Headers
+
+<ParamField header="X-Gitlab-Token" type="string" required>
+  The shared secret token you configure in both GitLab's webhook settings and your Lynx environment as `GITLAB_WEBHOOK_SECRET`. Lynx performs a constant-time comparison. Requests with a missing or non-matching token return `403`.
+</ParamField>
+
+### Handled events
+
+**`merge_request` — action `open`**
+
+Triggered when a new merge request is opened. Lynx queues an automatic review in the background.
+
+The sender's GitLab username must match a registered Lynx user. If no matching user is found, Lynx returns `404`.
+
+**`note` — noteable type `MergeRequest`**
+
+Triggered when a comment is posted on a merge request. Lynx only acts if the note body starts with `/review` (case-insensitive). When matched, a review is queued in the background.
+
+All other events and actions are acknowledged but ignored.
+
+### Setting up the webhook in GitLab
+
+<Steps>
+  <Step title="Go to your project or group settings">
+    Navigate to **Settings → Webhooks** in your GitLab project or group.
+  </Step>
+  <Step title="Configure the webhook">
+    - **URL:** `https://yourdomain.com/api/v1/webhooks/gitlab`
+    - **Secret token:** the value of your `GITLAB_WEBHOOK_SECRET` environment variable
+  </Step>
+  <Step title="Select triggers">
+    Enable **Merge request events** and **Comments**.
+  </Step>
+</Steps>
+
+### Response
+
+```json
+{ "status": "queued for review" }
+```
+
+or, for events Lynx does not act on:
+
+```json
+{ "status": "event_ignored" }
+```
+
+<ResponseField name="status" type="string">
+  Either `"queued for review"` (review was triggered) or `"event_ignored"` (event type or action not handled by Lynx).
+</ResponseField>
+
+---
+
+## Triggering a manual review
+
+Once your webhook is configured, you can request a review on any open pull request or merge request by posting a comment that starts with `/review`:
+
+```
+/review
+```
+
+The comment is case-insensitive, so `/Review` and `/REVIEW` both work. Lynx will queue a review and post the result as a new comment on the PR.

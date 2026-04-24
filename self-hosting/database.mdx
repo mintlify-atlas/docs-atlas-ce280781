@@ -1,0 +1,225 @@
+---
+title: "Database setup and migrations for Lynx"
+description: "Understand Lynx's PostgreSQL schema, how Alembic migrations run automatically on startup, and how to back up or reset your database."
+---
+
+Lynx uses PostgreSQL as its primary database, accessed through SQLAlchemy with the `psycopg2` driver. The schema is managed by Alembic, and migrations run automatically every time the backend container starts—so you never need to apply them manually in normal operation.
+
+## Connection string
+
+The backend reads the database URL from the `DATABASE_URL` environment variable:
+
+```
+postgresql://user:password@host:port/dbname
+```
+
+The default values from `.env.example` are:
+
+```bash
+DATABASE_URL=postgresql://lynx:lynx@db:5432/lynx
+POSTGRES_USER=lynx
+POSTGRES_PASSWORD=lynx
+POSTGRES_DB=lynx
+```
+
+When running with Docker Compose, `db` in the connection string resolves to the `lynx-db` container on the `lynx-network` Docker network.
+
+## Automatic migrations on startup
+
+The backend `Dockerfile` creates an entrypoint script that runs Alembic migrations before starting the API server:
+
+```bash
+alembic upgrade head
+echo "Starting application..."
+exec uvicorn app.main:app --host 0.0.0.0 --port 80
+```
+
+This means every time you run `docker compose up`, the backend automatically applies any pending migrations before accepting traffic. No manual migration step is needed after deployments or upgrades.
+
+<Note>
+  The backend container depends on the `db` service passing its `pg_isready` health check before it starts. Migrations only run after the database is confirmed reachable.
+</Note>
+
+## Alembic configuration
+
+Alembic is configured via `alembic.ini` at the project root. The migration scripts live in `backend/app/alembic/versions/`. The `env.py` file reads `DATABASE_URL` from the app's settings at runtime, so the `sqlalchemy.url` placeholder in `alembic.ini` is overridden automatically.
+
+Migration files follow this naming convention:
+
+```
+<revision_id>_<description>.py
+```
+
+The current migration chain in order:
+
+| Revision | Description |
+|---|---|
+| `be551a4f657c` | Create initial `users` and `api_keys` tables |
+| `e5b4b493d838` | Add `reviews` table |
+| `32901a3c5be4` | Add PR details and pending review status fields |
+| `05af5615a498` | Add cost calculation columns to `reviews` |
+| `a53ea357eb21` | Add `templates` table |
+| `8c31502eaa45` | Add `notifications` table |
+| `1bd8d792dbef` | Add `llm_models` table with seeded provider/model data |
+| `05b2ac75c5c5` | Add review status and error fields |
+
+## Database schema
+
+Lynx's schema consists of six tables.
+
+<AccordionGroup>
+  <Accordion title="users">
+    Stores authenticated users from GitHub or GitLab OAuth.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `github_id` | integer | Unique GitHub user ID |
+    | `github_username` | string | Unique GitHub username |
+    | `github_image_url` | string | GitHub avatar URL |
+    | `gitlab_id` | integer | Unique GitLab user ID |
+    | `gitlab_username` | string | Unique GitLab username |
+    | `gitlab_image_url` | string | GitLab avatar URL |
+    | `gitlab_access_token` | text | Encrypted GitLab OAuth token |
+    | `gitlab_refresh_token` | text | Encrypted GitLab refresh token |
+    | `gitlab_token_expires_at` | timestamptz | Token expiry |
+    | `email` | string | Unique email address |
+    | `created_at` | timestamptz | Account creation time |
+  </Accordion>
+
+  <Accordion title="api_keys">
+    Stores encrypted LLM provider API keys per user. Each user can have one active key per provider.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `user_id` | integer | Foreign key → `users.id` (cascade delete) |
+    | `encrypted_key` | text | API key encrypted at rest |
+    | `is_active` | boolean | Whether this key is currently active |
+    | `provider` | string | LLM provider name (e.g. `openai`, `anthropic`) |
+    | `model` | string | Model name associated with this key |
+    | `created_at` | timestamptz | Creation time |
+  </Accordion>
+
+  <Accordion title="reviews">
+    Tracks every AI code review performed, including token usage and cost metadata.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `user_id` | integer | Foreign key → `users.id` (cascade delete) |
+    | `provider` | string | LLM provider used (`openai`, `gemini`, `anthropic`) |
+    | `model` | string | Model used |
+    | `repo_name` | string | Repository that was reviewed |
+    | `pr_number` | integer | Pull request or merge request number |
+    | `pr_url` | string | Direct URL to the pull request |
+    | `status` | string | `pending`, `success`, or `failed` |
+    | `error_message` | text | Error details if the review failed |
+    | `prompt_tokens` | integer | Input tokens consumed |
+    | `completion_tokens` | integer | Output tokens consumed |
+    | `total_tokens` | integer | Total tokens consumed |
+    | `cost` | float | Estimated USD cost for this review |
+    | `review_text` | text | Full review output posted to the PR |
+    | `created_at` | timestamptz | Review timestamp |
+  </Accordion>
+
+  <Accordion title="templates">
+    Stores reusable review prompt templates per user.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `user_id` | integer | Foreign key → `users.id` (cascade delete) |
+    | `name` | string | Template name (unique per user) |
+    | `content` | text | Template body text |
+    | `is_default` | boolean | Whether this is the user's default template |
+    | `created_at` | timestamptz | Creation time |
+    | `updated_at` | timestamptz | Last update time |
+  </Accordion>
+
+  <Accordion title="llm_models">
+    Catalog of supported LLM models and their token pricing. Pre-seeded with models from OpenAI, Google Gemini, and Anthropic.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `provider` | string | Provider name (e.g. `openai`, `gemini`, `anthropic`) |
+    | `name` | string | Model identifier (unique per provider) |
+    | `input_cost_per_million` | float | Cost per million input tokens (USD) |
+    | `output_cost_per_million` | float | Cost per million output tokens (USD) |
+    | `is_active` | boolean | Whether the model is available for selection |
+    | `created_at` | timestamptz | Creation time |
+    | `updated_at` | timestamptz | Last update time |
+  </Accordion>
+
+  <Accordion title="notifications">
+    Records in-app notifications linked to completed reviews.
+
+    | Column | Type | Notes |
+    |---|---|---|
+    | `id` | integer | Primary key |
+    | `user_id` | integer | Foreign key → `users.id` (cascade delete) |
+    | `review_id` | integer | Foreign key → `reviews.id` (cascade delete) |
+    | `type` | string | Notification type |
+    | `read` | boolean | Whether the notification has been read |
+    | `created_at` | timestamptz | Notification timestamp |
+  </Accordion>
+</AccordionGroup>
+
+## Running migrations manually
+
+In normal operation you do not need to run migrations manually. If you need to run them outside the container startup flow—for example, to check the current migration state or apply them independently—use:
+
+```bash
+# Check current revision
+docker compose exec lynx-backend alembic current
+
+# Apply all pending migrations
+docker compose exec lynx-backend alembic upgrade head
+
+# Roll back one migration
+docker compose exec lynx-backend alembic downgrade -1
+```
+
+## Backing up the database
+
+Use `pg_dump` via the running `lynx-db` container:
+
+```bash
+docker compose exec db pg_dump \
+  -U lynx \
+  -d lynx \
+  > backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+To restore from a backup:
+
+```bash
+docker compose exec -T db psql \
+  -U lynx \
+  -d lynx \
+  < backup_20240101_120000.sql
+```
+
+## Resetting the database
+
+To wipe all data and start with a fresh schema:
+
+<Steps>
+  <Step title="Stop and remove containers and the database volume">
+    ```bash
+    docker compose down -v
+    ```
+    The `-v` flag removes the `pg_data` named volume along with the containers.
+  </Step>
+  <Step title="Restart services">
+    ```bash
+    docker compose up -d
+    ```
+    Docker creates a new `pg_data` volume and the backend runs `alembic upgrade head` to recreate the schema from scratch.
+  </Step>
+</Steps>
+
+<Warning>
+  `docker compose down -v` permanently deletes all data in the database. Take a backup first if you need to preserve any records.
+</Warning>

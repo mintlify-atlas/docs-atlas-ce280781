@@ -1,0 +1,113 @@
+{
+  "projectType": "saas",
+  "projectName": "Lynx",
+  "projectDescription": "A self-hosted AI code review platform that automatically reviews GitHub and GitLab pull requests using your own LLM API keys from OpenAI, Gemini, and Claude.",
+  "theme": "luma",
+  "primaryColor": "#dedede",
+  "lightColor": "#fbde58",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "deployment"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/github-app",
+              "configuration/gitlab",
+              "configuration/llm-providers"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/code-review",
+              "features/multi-agent",
+              "features/review-templates",
+              "features/notifications"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/docker",
+              "self-hosting/traefik",
+              "self-hosting/database"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api-reference/reviews",
+              "api-reference/settings",
+              "api-reference/templates",
+              "api-reference/webhooks"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automatic AI code review on PR/MR open events via webhooks",
+    "Manual review trigger with /review comment command",
+    "Multi-agent reviews using OpenAI, Gemini, and Claude simultaneously",
+    "GitHub App and GitLab (cloud + self-hosted) platform support",
+    "Bring-your-own API keys with Fernet encryption at rest",
+    "Customizable review prompt templates with {diff} placeholder",
+    "Review history dashboard with filtering and usage statistics",
+    "Token usage and cost tracking per review",
+    "Real-time notifications for review success/failure",
+    "Webhook signature verification for security",
+    "Docker-based self-hosted deployment with optional Traefik",
+    "OAuth 2.0 authentication via GitHub and GitLab"
+  ],
+  "publicApiSurface": [
+    "GET /api/v1/auth/github — GitHub OAuth login redirect",
+    "GET /api/v1/auth/github/callback — GitHub OAuth callback",
+    "GET /api/v1/auth/gitlab — GitLab OAuth login redirect",
+    "GET /api/v1/auth/gitlab/callback — GitLab OAuth callback",
+    "GET /api/v1/auth/me — Get current user info",
+    "POST /api/v1/auth/logout — Logout and clear session",
+    "POST /api/v1/webhooks/github — GitHub webhook receiver",
+    "POST /api/v1/webhooks/gitlab — GitLab webhook receiver",
+    "GET /api/v1/dashboard/reviews — List paginated reviews with filters",
+    "GET /api/v1/dashboard/reviews/{review_id} — Get review detail",
+    "GET /api/v1/dashboard/stats — Get usage statistics",
+    "POST /api/v1/settings/api-key — Set LLM API key",
+    "DELETE /api/v1/settings/api-key — Delete LLM API key",
+    "PATCH /api/v1/settings/api-key/toggle — Enable/disable API key",
+    "GET /api/v1/settings/api-keys — List configured API keys",
+    "GET /api/v1/settings/models — List supported LLM models",
+    "POST /api/v1/settings/api-keys/bulk — Bulk set API keys",
+    "GET /api/v1/templates — List review templates",
+    "GET /api/v1/templates/default — Get default template",
+    "POST /api/v1/templates — Create review template",
+    "PATCH /api/v1/templates/{template_id} — Update template",
+    "DELETE /api/v1/templates/{template_id} — Delete template",
+    "POST /api/v1/templates/set-default — Set default template",
+    "POST /api/v1/templates/reset-default — Reset to system default"
+  ]
+}

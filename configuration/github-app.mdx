@@ -1,0 +1,107 @@
+---
+title: "Connect Lynx to GitHub via GitHub App"
+description: "Set up a GitHub App to give Lynx access to your repositories so it can read pull request diffs and post AI-generated code review comments automatically."
+---
+
+Lynx integrates with GitHub through a GitHub App. The App handles two responsibilities: it authenticates as an installation to read pull request diffs and post review comments, and it provides OAuth login for your users. Follow the steps below to create the App, configure its permissions and webhooks, and wire up the credentials in your `.env` file.
+
+<Steps>
+
+<Step title="Create a new GitHub App">
+  Go to **GitHub Settings > Developer settings > GitHub Apps > New GitHub App**.
+
+  Fill in the following fields:
+
+  - **GitHub App name**: any unique name (e.g. `Lynx Code Review`)
+  - **Homepage URL**: your Lynx frontend URL (e.g. `https://lynx.example.com`)
+  - **Callback URL**: `https://yourdomain.com/api/v1/auth/github/callback`
+
+  Leave **Expire user authorization tokens** checked and **Request user authorization (OAuth) during installation** unchecked for now.
+</Step>
+
+<Step title="Set the webhook URL and secret">
+  Under **Webhook**, enable the webhook and set:
+
+  - **Webhook URL**: `https://yourdomain.com/api/v1/webhooks/github`
+  - **Webhook secret**: a random string you generate (e.g. `openssl rand -hex 32`)
+
+  Copy the secret and add it to your `.env`:
+
+  ```bash
+  GITHUB_WEBHOOK_SECRET=your-random-secret-here
+  ```
+
+  <Warning>
+    The webhook URL must be publicly reachable by GitHub's servers. Local development requires a tunnel (e.g. ngrok) pointed at your backend port.
+  </Warning>
+</Step>
+
+<Step title="Configure repository permissions">
+  Under **Permissions > Repository permissions**, grant:
+
+  | Permission | Access level |
+  |---|---|
+  | Pull requests | Read & Write |
+  | Issues | Read & Write |
+  | Contents | Read-only |
+
+  **Pull requests** and **Issues** write access is required so Lynx can post review comments on PRs. **Contents** read access is needed to fetch the diff.
+</Step>
+
+<Step title="Subscribe to webhook events">
+  Under **Subscribe to events**, enable:
+
+  - **Pull request** — triggers an automatic review when a PR is opened
+  - **Issue comment** — allows triggering a review on demand via the `/review` command
+
+  <Note>
+    Lynx only acts on `pull_request` events with action `opened` and `issue_comment` events with action `created`. All other events are acknowledged and ignored.
+  </Note>
+</Step>
+
+<Step title="Generate a private key">
+  Scroll to the bottom of the App settings page and click **Generate a private key**. A `.pem` file downloads automatically.
+
+  Save the file somewhere accessible to your backend container (e.g. `/secrets/lynx.pem`) and set:
+
+  ```bash
+  GITHUB_PRIVATE_KEY_PATH=/secrets/lynx.pem
+  ```
+
+  The backend reads this file at startup to sign JWT tokens for GitHub App API requests.
+</Step>
+
+<Step title="Copy the App ID">
+  At the top of the App settings page, note the **App ID** integer and add it to your `.env`:
+
+  ```bash
+  GITHUB_APP_ID=123456
+  ```
+</Step>
+
+<Step title="Copy the OAuth credentials">
+  Still on the App settings page, under **OAuth credentials**, copy the **Client ID** and generate a **Client secret**:
+
+  ```bash
+  GITHUB_CLIENT_ID=Iv1.abc123...
+  GITHUB_CLIENT_SECRET=your-client-secret
+  ```
+
+  These are used for the OAuth login flow. Users who sign in with GitHub are redirected to `https://yourdomain.com/api/v1/auth/github/callback` after authorization.
+</Step>
+
+<Step title="Install the App on your repositories">
+  From the App settings page, click **Install App** in the left sidebar. Choose the GitHub account or organization and select the repositories Lynx should have access to.
+
+  Users must have the App installed on a repository before Lynx can review its pull requests. The installation grants the App the permissions configured in step 3.
+</Step>
+
+</Steps>
+
+## How the /review command works
+
+Lynx listens for `issue_comment` events on the GitHub webhook endpoint `POST /api/v1/webhooks/github`. When a comment is created on a pull request and its body starts with `/review` (case-insensitive), Lynx queues a review for that PR in the background.
+
+The review runs using the API keys configured for the authenticated user who opened the PR. If no user matching the PR author's GitHub username exists in Lynx's database, the webhook returns a 404 and no review is posted.
+
+Automatic reviews on PR open and manual `/review` command reviews follow the same code path — they both call `perform_review` with the repository name, PR number, and GitHub installation ID.

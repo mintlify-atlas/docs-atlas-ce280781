@@ -1,0 +1,148 @@
+---
+title: "Environment variables reference"
+description: "Complete reference for all environment variables that configure Lynx's backend behavior, database connections, security, and integrations."
+---
+
+Lynx is configured entirely through environment variables. Copy `.env.example` to `.env` in the project root and fill in the values before starting the application. Variables marked as required have no default and must be set for Lynx to start successfully.
+
+## GitHub credentials
+
+These variables connect Lynx to your GitHub App and enable OAuth login for GitHub users.
+
+<ParamField path="GITHUB_APP_ID" type="integer" required>
+  The numeric ID of your GitHub App. Found on the GitHub App settings page under **General > App ID**.
+</ParamField>
+
+<ParamField path="GITHUB_PRIVATE_KEY_PATH" type="string" required>
+  Absolute or relative path to the `.pem` private key file generated for your GitHub App. Used to authenticate as the App installation when reading PR diffs and posting review comments.
+</ParamField>
+
+<ParamField path="GITHUB_WEBHOOK_SECRET" type="string" required>
+  A random secret string you set when creating the GitHub App webhook. Lynx uses it to verify the `X-Hub-Signature-256` header on every incoming webhook request.
+</ParamField>
+
+<ParamField path="GITHUB_CLIENT_ID" type="string" required>
+  OAuth App Client ID from your GitHub App's settings page. Used to redirect users through the GitHub OAuth login flow.
+</ParamField>
+
+<ParamField path="GITHUB_CLIENT_SECRET" type="string" required>
+  OAuth App Client Secret from your GitHub App's settings page. Keep this value secret and never commit it to version control.
+</ParamField>
+
+## GitLab credentials
+
+These variables enable GitLab OAuth login and webhook verification. `GITLAB_URL` can be omitted when using gitlab.com.
+
+<ParamField path="GITLAB_CLIENT_ID" type="string" required>
+  Application ID from your GitLab OAuth application. Found under **Settings > Applications** in your GitLab account or group.
+</ParamField>
+
+<ParamField path="GITLAB_CLIENT_SECRET" type="string" required>
+  Secret from your GitLab OAuth application. Keep this value secret.
+</ParamField>
+
+<ParamField path="GITLAB_WEBHOOK_SECRET" type="string" required>
+  A secret token you set when configuring a GitLab webhook. Lynx verifies the `X-Gitlab-Token` header on incoming merge request and comment events.
+</ParamField>
+
+<ParamField path="GITLAB_URL" type="string" default="https://gitlab.com">
+  Base URL of your GitLab instance. Override this when using a self-hosted GitLab server (e.g. `https://gitlab.example.com`).
+</ParamField>
+
+## Database
+
+Lynx uses PostgreSQL. The `DATABASE_URL` is used by the application; the `POSTGRES_*` variables are consumed by the Docker Compose `db` service to initialize the database.
+
+<ParamField path="DATABASE_URL" type="string" default="postgresql://lynx:lynx@db:5432/lynx">
+  Full PostgreSQL connection string. The default value works with the bundled Docker Compose setup. Override when pointing at an external database.
+</ParamField>
+
+<ParamField path="POSTGRES_USER" type="string" default="lynx">
+  Username for the PostgreSQL database, used by the `db` container on first run.
+</ParamField>
+
+<ParamField path="POSTGRES_PASSWORD" type="string" default="lynx">
+  Password for the PostgreSQL user. Change this in production.
+</ParamField>
+
+<ParamField path="POSTGRES_DB" type="string" default="lynx">
+  Name of the PostgreSQL database to create and connect to.
+</ParamField>
+
+## Security
+
+<ParamField path="ENCRYPTION_KEY" type="string" required>
+  A Fernet-compatible base64-encoded 32-byte key used to encrypt LLM API keys at rest in the database. Generate one with:
+
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+</ParamField>
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret key used to sign and verify JWT session tokens stored in the authentication cookie. Use a long, random string in production.
+</ParamField>
+
+## Application
+
+<ParamField path="ENVIRONMENT" type="string" default="development">
+  Runtime environment. Set to `production` when deploying publicly. Affects logging verbosity and certain security defaults.
+</ParamField>
+
+<ParamField path="BACKEND_URL" type="string" default="http://localhost:8000">
+  Public-facing URL of the Lynx backend. Used to construct OAuth callback URLs (e.g. `{BACKEND_URL}/api/v1/auth/github/callback`). Must be reachable from GitHub/GitLab servers when handling webhooks.
+</ParamField>
+
+<ParamField path="FRONTEND_URL" type="string" default="http://localhost:5173">
+  Public-facing URL of the Lynx frontend. Used to construct redirect URLs after OAuth login and for CORS allow-listing.
+</ParamField>
+
+<ParamField path="PORT" type="integer" default="8000">
+  Port the backend server listens on.
+</ParamField>
+
+<ParamField path="API_PREFIX" type="string" default="/api/v1">
+  URL prefix for all API routes.
+</ParamField>
+
+<ParamField path="CORS_ORIGINS" type="string" default='["http://localhost:5173"]'>
+  JSON array of allowed CORS origins. Add your frontend's public URL in production.
+
+  ```bash
+  CORS_ORIGINS=["https://lynx.example.com"]
+  ```
+</ParamField>
+
+<ParamField path="COOKIE_SECURE" type="boolean" default="true">
+  When `true`, session cookies are marked `Secure` and only sent over HTTPS. Set to `false` for local HTTP development.
+</ParamField>
+
+<ParamField path="COOKIE_SAMESITE" type="string" default="lax">
+  `SameSite` attribute for session cookies. Accepted values: `lax`, `strict`, `none`. Use `none` (with `COOKIE_SECURE=true`) when the frontend and backend are on different domains.
+</ParamField>
+
+## Frontend
+
+<ParamField path="VITE_API_URL" type="string" required>
+  URL the Vite frontend uses to reach the backend API. Typically the same as `BACKEND_URL`. This variable is embedded at build time by Vite.
+
+  ```bash
+  VITE_API_URL=https://api.lynx.example.com
+  ```
+</ParamField>
+
+## Traefik / production
+
+These variables are only used when deploying with the production Docker Compose profile that includes Traefik as a reverse proxy.
+
+<ParamField path="DOMAIN_NAME" type="string">
+  Root domain for your Lynx deployment (e.g. `lynx.example.com`). Traefik uses this to route requests and obtain a TLS certificate.
+</ParamField>
+
+<ParamField path="SSL_EMAIL" type="string">
+  Email address for Let's Encrypt certificate registration and renewal notices.
+</ParamField>
+
+<ParamField path="CF_DNS_API_TOKEN" type="string">
+  Cloudflare API token with DNS edit permissions. Used by Traefik to complete the ACME DNS-01 challenge when issuing TLS certificates through Cloudflare.
+</ParamField>

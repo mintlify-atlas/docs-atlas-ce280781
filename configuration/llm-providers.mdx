@@ -1,0 +1,195 @@
+---
+title: "Configure LLM providers: OpenAI, Gemini, Claude"
+description: "Add API keys for OpenAI, Google Gemini, and Anthropic Claude so Lynx can run AI-powered code reviews on your pull and merge requests."
+---
+
+Lynx supports three LLM providers: `openai`, `gemini`, and `anthropic`. Each provider requires an API key, which you add through the Lynx dashboard settings page. Keys are validated against the provider's API before being stored, and are encrypted at rest using [Fernet](https://cryptography.io/en/latest/fernet/) symmetric encryption with the `ENCRYPTION_KEY` you configured in your `.env`.
+
+<Note>
+  All active providers run simultaneously on every PR. If you have API keys configured and enabled for both OpenAI and Anthropic, Lynx will post a separate review comment from each provider on the same pull request.
+</Note>
+
+## Getting your API key
+
+<Tabs>
+
+<Tab title="OpenAI">
+  1. Go to [platform.openai.com](https://platform.openai.com) and sign in.
+  2. Navigate to **API keys** in the left sidebar.
+  3. Click **Create new secret key**, give it a name, and copy the key immediately — it is only shown once.
+
+  ```
+  sk-proj-...
+  ```
+
+  Make sure your account has an active billing method, as API calls require a paid plan or credits.
+</Tab>
+
+<Tab title="Gemini">
+  1. Go to [aistudio.google.com](https://aistudio.google.com) and sign in with your Google account.
+  2. Click **Get API key** in the left sidebar.
+  3. Click **Create API key**, select or create a Google Cloud project, and copy the key.
+
+  ```
+  AIza...
+  ```
+
+  Gemini API keys are associated with a Google Cloud project. Ensure the **Generative Language API** is enabled in your project.
+</Tab>
+
+<Tab title="Anthropic (Claude)">
+  1. Go to [console.anthropic.com](https://console.anthropic.com) and sign in.
+  2. Navigate to **API Keys** in the left sidebar.
+  3. Click **Create Key**, give it a name, and copy the key.
+
+  ```
+  sk-ant-...
+  ```
+
+  Your account must have credits or an active subscription to make API calls.
+</Tab>
+
+</Tabs>
+
+## Adding an API key
+
+Use the settings page in the Lynx dashboard, or call the API directly.
+
+### Via the dashboard
+
+Open the Lynx dashboard and go to **Settings**. For each provider you want to enable, enter your API key and select a model from the dropdown. The available models are fetched from `GET /api/v1/settings/models`.
+
+### Via the API
+
+```bash
+POST /api/v1/settings/api-key
+```
+
+**Request body:**
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o",
+  "api_key": "sk-proj-..."
+}
+```
+
+| Field | Type | Values |
+|---|---|---|
+| `provider` | string | `openai`, `gemini`, `anthropic` |
+| `model` | string | Any active model name for the provider |
+| `api_key` | string | Your provider API key |
+
+Lynx validates the key against the provider's API before storing it. If the key is invalid, the endpoint returns a `400` error with a message from the provider. If a key for that provider already exists, it is replaced.
+
+## Checking supported models
+
+Retrieve the list of currently active models for each provider:
+
+```bash
+GET /api/v1/settings/models
+```
+
+**Response:**
+
+```json
+[
+  {
+    "provider": "openai",
+    "models": ["gpt-4o", "gpt-4o-mini"]
+  },
+  {
+    "provider": "gemini",
+    "models": ["gemini-2.0-flash", "gemini-1.5-pro"]
+  },
+  {
+    "provider": "anthropic",
+    "models": ["claude-opus-4-5", "claude-sonnet-4-5"]
+  }
+]
+```
+
+Only models with `is_active = true` in the database are returned. Administrators can manage which models are available by updating the `llm_models` table directly.
+
+## Enabling and disabling providers
+
+Toggle a provider on or off without deleting its API key:
+
+```bash
+PATCH /api/v1/settings/api-key/toggle
+```
+
+**Request body:**
+
+```json
+{
+  "provider": "anthropic",
+  "is_active": false
+}
+```
+
+When `is_active` is `false`, Lynx skips that provider during reviews. The API key remains stored and encrypted; re-enable it by sending `"is_active": true`.
+
+## Removing a provider
+
+Delete a provider's API key entirely:
+
+```bash
+DELETE /api/v1/settings/api-key
+```
+
+**Request body:**
+
+```json
+{
+  "provider": "gemini"
+}
+```
+
+This permanently removes the encrypted key from the database. To use that provider again you must re-enter the API key.
+
+## Viewing configured providers
+
+Check which providers you have configured and their active status:
+
+```bash
+GET /api/v1/settings/api-keys
+```
+
+**Response:**
+
+```json
+[
+  { "provider": "openai", "model": "gpt-4o", "is_active": true },
+  { "provider": "anthropic", "model": "claude-opus-4-5", "is_active": false }
+]
+```
+
+API key values are never returned — only the provider, selected model, and active status are exposed.
+
+## Using multiple providers simultaneously
+
+You can configure API keys for all three providers at once using the bulk endpoint:
+
+```bash
+POST /api/v1/settings/api-keys/bulk
+```
+
+**Request body:**
+
+```json
+{
+  "api_keys": [
+    { "provider": "openai", "model": "gpt-4o", "api_key": "sk-proj-..." },
+    { "provider": "gemini", "model": "gemini-2.0-flash", "api_key": "AIza..." },
+    { "provider": "anthropic", "model": "claude-opus-4-5", "api_key": "sk-ant-..." }
+  ]
+}
+```
+
+Each key is validated and saved independently. The response reports how many succeeded and lists any errors per provider.
+
+<Tip>
+  Running multiple providers gives you diverse perspectives on the same code change. Keep in mind that each active provider posts its own comment on every PR, which may create noise on high-volume repositories. Use the toggle endpoint to enable only the providers you want active at any given time.
+</Tip>

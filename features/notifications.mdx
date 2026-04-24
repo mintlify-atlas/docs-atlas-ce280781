@@ -1,0 +1,181 @@
+---
+title: "Real-time review notifications in Lynx"
+description: "Lynx fires review_success and review_failed events the moment each LLM provider finishes, delivered over Server-Sent Events for instant in-app updates."
+---
+
+Every time an LLM provider completes a code review — successfully or not — Lynx creates a notification and pushes it to any active browser sessions over a persistent Server-Sent Events (SSE) stream. This means the dashboard updates the moment your review is ready, without polling.
+
+## Notification events
+
+Lynx produces exactly two notification types:
+
+| Type | When it fires |
+|------|---------------|
+| `review_success` | The LLM returned a review and it has been saved to the database |
+| `review_failed` | The LLM call raised an exception (bad API key, provider outage, empty response, etc.) |
+
+Each provider in a [multi-agent review](/features/multi-agent) fires its own notification independently. If you have three providers configured, a single PR produces up to three `review_success` events (or a mix of success and failed).
+
+## Notification model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Auto-assigned primary key |
+| `user_id` | integer | The user who owns this notification |
+| `review_id` | integer | Foreign key to the associated `Review` record |
+| `type` | string | `review_success` or `review_failed` |
+| `read` | boolean | `false` until explicitly marked read |
+| `created_at` | datetime | ISO 8601 timestamp, set by the database |
+
+The full notification response also includes fields joined from the linked review: `repo_name`, `pr_number`, `provider`, and `error` (the `error_message` from the review record, present only on failed reviews).
+
+## How notifications are published
+
+When a provider finishes (in `app/api/services/review.py`), Lynx calls `notification_manager.publish`. This writes a `Notification` row to the database and then enqueues an SSE payload to every active subscriber for that user:
+
+```python
+# review_success path
+await notification_manager.publish(
+    user_id, "review_success", review_record.id, db
+)
+
+# review_failed path
+await notification_manager.publish(
+    user_id, "review_failed", review_record.id, db
+)
+```
+
+The SSE payload format is:
+
+```text
+event: review_success
+data: {"id": 42, "review_id": 17, "type": "review_success"}
+```
+
+## Real-time stream
+
+```http
+GET /api/v1/notifications/stream
+```
+
+Opens a persistent SSE connection. The server sends a keepalive comment every 15 seconds to prevent idle connection timeouts:
+
+```text
+: keepalive
+```
+
+Each review event arrives as a named SSE event. Connect to this endpoint in the frontend using the browser's `EventSource` API:
+
+```javascript
+const source = new EventSource('/api/v1/notifications/stream');
+
+source.addEventListener('review_success', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Review ready:', data.review_id);
+});
+
+source.addEventListener('review_failed', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Review failed for review:', data.review_id);
+});
+```
+
+<Note>
+  The SSE stream is per-user. Each authenticated browser tab opens its own queue in the `NotificationManager`. When the connection closes, the queue is removed automatically.
+</Note>
+
+## REST endpoints
+
+### List notifications
+
+```http
+GET /api/v1/notifications
+```
+
+Returns the 50 most recent notifications for the authenticated user, ordered by `created_at` descending. Each item includes enriched fields from the linked review record.
+
+**Response shape:**
+
+```json
+[
+  {
+    "id": 42,
+    "type": "review_success",
+    "review_id": 17,
+    "repo_name": "acme/backend",
+    "pr_number": 314,
+    "provider": "openai",
+    "error": null,
+    "read": false,
+    "created_at": "2025-04-24T10:31:05.123456+00:00"
+  },
+  {
+    "id": 41,
+    "type": "review_failed",
+    "review_id": 16,
+    "repo_name": "acme/backend",
+    "pr_number": 313,
+    "provider": "anthropic",
+    "error": "Anthropic request failed: 401 Unauthorized",
+    "read": true,
+    "created_at": "2025-04-24T09:55:12.000000+00:00"
+  }
+]
+```
+
+### Mark a single notification as read
+
+```http
+PATCH /api/v1/notifications/{notification_id}/read
+```
+
+Sets `read: true` on the specified notification. Returns `{"success": true}`, or `{"detail": "Not found"}` if the notification does not exist or belongs to a different user.
+
+### Mark all notifications as read
+
+```http
+PATCH /api/v1/notifications/read-all
+```
+
+Sets `read: true` on every unread notification for the authenticated user in one database operation. Returns `{"success": true}`.
+
+## Review failure scenarios
+
+When a `review_failed` notification fires, the linked `Review` record has `status: "failed"` and an `error_message` explaining what went wrong. Common causes:
+
+<AccordionGroup>
+  <Accordion title="Invalid or expired API key">
+    The provider returned a 401 or 403 response. The `error_message` will contain the provider's error string, for example:
+
+    ```text
+    OpenAI request failed: Error code: 401 - Incorrect API key provided
+    ```
+
+    Fix by updating the API key in **Settings → API Keys**.
+  </Accordion>
+  <Accordion title="Provider API outage or rate limit">
+    The provider returned a 429 or 5xx response. Lynx records the error and fires `review_failed`. The review can be re-triggered manually by commenting `/review` on the PR.
+  </Accordion>
+  <Accordion title="Empty response">
+    The LLM returned an empty body. Lynx raises a `RuntimeError`:
+
+    ```text
+    openai returned empty response
+    ```
+
+    This is rare and typically resolves on retry.
+  </Accordion>
+  <Accordion title="Unknown provider">
+    An API key is configured with a provider value that Lynx does not recognise. The LLM service raises:
+
+    ```text
+    Unknown provider: <name>
+    ```
+
+    This indicates a data integrity issue; contact your Lynx administrator.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  Failed reviews are visible in the dashboard via `GET /api/v1/usage/reviews?status=failed`. Each failed review record includes `error_message` with the full exception text to help diagnose the root cause.
+</Tip>

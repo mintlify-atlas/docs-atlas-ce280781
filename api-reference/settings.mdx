@@ -1,0 +1,280 @@
+---
+title: 'LLM API keys settings endpoints'
+description: 'Add, remove, toggle, and bulk-configure LLM provider API keys for OpenAI, Gemini, and Anthropic. Keys are encrypted at rest and never returned by the API.'
+---
+
+The settings endpoints let you configure which LLM provider credentials Lynx uses when performing code reviews. Lynx supports OpenAI, Google Gemini, and Anthropic. Each provider allows exactly one active API key per user at a time.
+
+<Note>
+  Lynx **never returns the actual key value** in any API response. The `GET /settings/api-keys` endpoint only returns the provider name, selected model, and active status.
+</Note>
+
+All keys are encrypted at rest before being stored. Lynx validates each key against the provider before saving it — an invalid key returns a `400` error.
+
+---
+
+## POST /settings/api-key
+
+Saves an API key for a provider. If a key already exists for that provider, it is replaced. The model can also be updated this way.
+
+**Authentication required:** yes
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/settings/api-key \
+  -b "lynx_session=<your-session-cookie>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openai",
+    "model": "gpt-4o",
+    "api_key": "sk-..."
+  }'
+```
+
+### Request body
+
+<ParamField body="provider" type="string" required>
+  LLM provider identifier. One of: `openai`, `gemini`, `anthropic`.
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model name to use for reviews with this provider. Must be a supported, active model for the given provider. Use `GET /settings/models` to retrieve valid values.
+</ParamField>
+
+<ParamField body="api_key" type="string" required>
+  The API key to save. Lynx validates this key against the provider before storing it.
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "success"
+}
+```
+
+Returns `400` if the model is not valid for the provider, or if the API key is rejected by the provider.
+
+---
+
+## DELETE /settings/api-key
+
+Removes the saved API key for a provider. If no key exists for the specified provider, the request still succeeds silently.
+
+**Authentication required:** yes
+
+```bash
+curl -X DELETE https://yourdomain.com/api/v1/settings/api-key \
+  -b "lynx_session=<your-session-cookie>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "openai"}'
+```
+
+### Request body
+
+<ParamField body="provider" type="string" required>
+  Provider whose key should be deleted. One of: `openai`, `gemini`, `anthropic`.
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "success"
+}
+```
+
+---
+
+## PATCH /settings/api-key/toggle
+
+Enables or disables an existing API key without deleting it. Useful for temporarily pausing reviews with a specific provider.
+
+**Authentication required:** yes
+
+```bash
+curl -X PATCH https://yourdomain.com/api/v1/settings/api-key/toggle \
+  -b "lynx_session=<your-session-cookie>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "anthropic", "is_active": false}'
+```
+
+### Request body
+
+<ParamField body="provider" type="string" required>
+  Provider whose key should be toggled. One of: `openai`, `gemini`, `anthropic`.
+</ParamField>
+
+<ParamField body="is_active" type="boolean" required>
+  Set to `true` to enable the key, `false` to disable it.
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "success",
+  "is_active": false
+}
+```
+
+<ResponseField name="status" type="string">
+  Always `"success"` on a successful toggle.
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  The updated active state of the key.
+</ResponseField>
+
+Returns `404` if no key is found for the specified provider.
+
+---
+
+## GET /settings/api-keys
+
+Returns all saved API keys for the authenticated user. **The actual key value is never included in the response.**
+
+**Authentication required:** yes
+
+```bash
+curl https://yourdomain.com/api/v1/settings/api-keys \
+  -b "lynx_session=<your-session-cookie>"
+```
+
+### Response
+
+```json
+[
+  {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "is_active": true
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-3-5-sonnet-20241022",
+    "is_active": false
+  }
+]
+```
+
+<ResponseField name="provider" type="string">
+  The LLM provider (`openai`, `gemini`, or `anthropic`).
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The model configured for this provider.
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the key is currently active and used for new reviews.
+</ResponseField>
+
+---
+
+## GET /settings/models
+
+Returns all supported, active models grouped by provider. This endpoint is **public** — no authentication is required.
+
+```bash
+curl https://yourdomain.com/api/v1/settings/models
+```
+
+### Response
+
+```json
+[
+  {
+    "provider": "openai",
+    "models": ["gpt-4o", "gpt-4o-mini", "o3-mini"]
+  },
+  {
+    "provider": "anthropic",
+    "models": ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
+  },
+  {
+    "provider": "gemini",
+    "models": ["gemini-1.5-pro", "gemini-1.5-flash"]
+  }
+]
+```
+
+<ResponseField name="provider" type="string">
+  Provider identifier.
+</ResponseField>
+
+<ResponseField name="models" type="string[]">
+  Sorted list of model names available for this provider. Use these exact values when calling `POST /settings/api-key`.
+</ResponseField>
+
+---
+
+## POST /settings/api-keys/bulk
+
+Saves multiple provider API keys in a single request. Each entry is processed independently — a failure for one provider does not prevent the others from being saved.
+
+**Authentication required:** yes
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/settings/api-keys/bulk \
+  -b "lynx_session=<your-session-cookie>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_keys": [
+      {"provider": "openai", "model": "gpt-4o", "api_key": "sk-..."},
+      {"provider": "anthropic", "model": "claude-3-5-sonnet-20241022", "api_key": "sk-ant-..."}
+    ]
+  }'
+```
+
+### Request body
+
+<ParamField body="api_keys" type="object[]" required>
+  Array of API key entries to save.
+
+  <Expandable title="API key entry fields">
+    <ParamField body="provider" type="string" required>
+      One of: `openai`, `gemini`, `anthropic`.
+    </ParamField>
+    <ParamField body="model" type="string" required>
+      Model name. Must be valid for the given provider.
+    </ParamField>
+    <ParamField body="api_key" type="string" required>
+      The API key value to save and validate.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "completed",
+  "successful": 2,
+  "failed": 0,
+  "results": [
+    {"provider": "openai", "status": "success"},
+    {"provider": "anthropic", "status": "success"}
+  ],
+  "errors": []
+}
+```
+
+<ResponseField name="status" type="string">
+  Always `"completed"` — indicates the bulk operation finished, regardless of individual failures.
+</ResponseField>
+
+<ResponseField name="successful" type="integer">
+  Number of keys that were saved successfully.
+</ResponseField>
+
+<ResponseField name="failed" type="integer">
+  Number of keys that failed to save.
+</ResponseField>
+
+<ResponseField name="results" type="object[]">
+  Details for each successfully saved key. Each entry contains `provider` and `"status": "success"`.
+</ResponseField>
+
+<ResponseField name="errors" type="object[]">
+  Details for each failed entry. Each entry contains `provider` and an `error` string describing the failure reason.
+</ResponseField>

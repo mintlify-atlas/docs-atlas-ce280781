@@ -1,0 +1,207 @@
+---
+title: "Run Lynx with Docker Compose"
+description: "Deploy Lynx's FastAPI backend, React frontend, and PostgreSQL database as Docker containers using the appropriate Compose file for your environment."
+---
+
+Lynx ships with three Docker Compose files to cover local development, production with Traefik, and a standalone Traefik deployment. All three share the same three services—`lynx-backend`, `lynx-frontend`, and `db`—but differ in port exposure, environment defaults, and Traefik label configuration.
+
+## Compose files
+
+<CardGroup cols={3}>
+  <Card title="docker-compose.dev.yml" icon="code">
+    Local development. Exposes the backend on port `8000` and the frontend on port `5173`. Also exposes PostgreSQL on `5432` for direct database access.
+  </Card>
+  <Card title="docker-compose.yml" icon="server">
+    Production with Traefik. No direct port exposure for backend or frontend—traffic is routed through the `proxy` network managed by Traefik.
+  </Card>
+  <Card title="docker-compose.traefik.yml" icon="shield">
+    Deploys the Traefik reverse proxy itself. Run this once before bringing up the main stack. See the [Traefik setup guide](/self-hosting/traefik) for details.
+  </Card>
+</CardGroup>
+
+## Services
+
+| Service | Image | Internal port | Dev host port |
+|---|---|---|---|
+| `lynx-backend` | Built from `./backend` | `80` | `8000` |
+| `lynx-frontend` | Built from `./frontend` | `80` | `5173` |
+| `db` | `postgres:17-alpine` | `5432` | `5432` (dev only) |
+
+The backend depends on `db` passing its health check before it starts. The frontend depends on `lynx-backend` being up.
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in your values before running any Compose command.
+
+```bash
+cp .env.example .env
+```
+
+The `.env` file is read automatically by Docker Compose. Key variables:
+
+```bash
+# Database
+POSTGRES_USER=lynx
+POSTGRES_PASSWORD=lynx
+POSTGRES_DB=lynx
+DATABASE_URL=postgresql://lynx:lynx@db:5432/lynx
+
+# App
+ENVIRONMENT=production
+JWT_SECRET=
+ENCRYPTION_KEY=
+BACKEND_URL=
+FRONTEND_URL=
+VITE_API_URL=
+
+# GitHub OAuth app
+GITHUB_APP_ID=
+GITHUB_PRIVATE_KEY_PATH=
+GITHUB_WEBHOOK_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+
+# GitLab OAuth app
+GITLAB_CLIENT_ID=
+GITLAB_CLIENT_SECRET=
+GITLAB_WEBHOOK_SECRET=
+GITLAB_URL=https://gitlab.com
+```
+
+<Note>
+  `VITE_API_URL` is a build-time argument passed to the frontend image. It must be set before building—changing it later requires a rebuild.
+</Note>
+
+## Running Lynx locally
+
+<Steps>
+  <Step title="Copy and configure environment variables">
+    ```bash
+    cp .env.example .env
+    ```
+    Edit `.env` and set at minimum `JWT_SECRET`, `ENCRYPTION_KEY`, `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY_PATH`, and `GITHUB_WEBHOOK_SECRET`.
+  </Step>
+  <Step title="Build the images">
+    ```bash
+    docker compose -f docker-compose.dev.yml build
+    ```
+  </Step>
+  <Step title="Start all services">
+    ```bash
+    docker compose -f docker-compose.dev.yml up -d
+    ```
+    Docker Compose starts the database first, waits for its health check to pass, then starts the backend, and finally the frontend.
+  </Step>
+  <Step title="Verify services are running">
+    ```bash
+    docker compose -f docker-compose.dev.yml ps
+    ```
+    All three containers should show `running` or `healthy`. The frontend is available at `http://localhost:5173` and the backend API at `http://localhost:8000/api/v1`.
+  </Step>
+</Steps>
+
+## Running in production
+
+<Steps>
+  <Step title="Create the proxy Docker network">
+    The production Compose file references an external `proxy` network managed by Traefik. Create it once:
+    ```bash
+    docker network create proxy
+    ```
+  </Step>
+  <Step title="Build the production images">
+    ```bash
+    docker compose build
+    ```
+  </Step>
+  <Step title="Start all services">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  For the full Traefik setup with automatic HTTPS, follow the [Traefik guide](/self-hosting/traefik) before running `docker compose up -d`.
+</Tip>
+
+## Viewing logs
+
+```bash
+# Stream backend logs
+docker compose logs -f lynx-backend
+
+# Stream frontend logs
+docker compose logs -f lynx-frontend
+
+# Stream all service logs at once
+docker compose logs -f
+```
+
+Use the same commands with `-f docker-compose.dev.yml` when running the dev stack.
+
+## Rebuilding after code changes
+
+After modifying backend or frontend source code, rebuild the affected image and recreate the container:
+
+```bash
+# Rebuild a single service
+docker compose build lynx-backend
+
+# Recreate containers with the new image
+docker compose up -d lynx-backend
+```
+
+Or rebuild and recreate everything at once:
+
+```bash
+docker compose up -d --build
+```
+
+## Stopping services
+
+```bash
+# Stop and remove containers, but keep the database volume
+docker compose down
+
+# Stop and remove containers AND the database volume
+docker compose down -v
+```
+
+<Warning>
+  Running `docker compose down -v` permanently deletes all database data. Only use it when you intend to start from a clean state.
+</Warning>
+
+## Health checks
+
+The `db` service runs `pg_isready` every 10 seconds with a 5-second timeout and up to 5 retries:
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lynx}"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+```
+
+The backend waits for this check to pass (`condition: service_healthy`) before starting. You can check service health at any time:
+
+```bash
+docker inspect lynx-db --format='{{.State.Health.Status}}'
+```
+
+## Data persistence
+
+The database data directory is stored in a named Docker volume:
+
+```yaml
+volumes:
+  pg_data:
+    driver: local
+```
+
+This volume persists across `docker compose down` restarts. To see it:
+
+```bash
+docker volume ls | grep pg_data
+```

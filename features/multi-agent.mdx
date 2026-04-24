@@ -1,0 +1,122 @@
+---
+title: "Multi-agent reviews with multiple LLMs"
+description: "Run OpenAI, Gemini, and Claude simultaneously on every PR to get independent AI perspectives in a single comment posted to your pull request."
+---
+
+When you add API keys for more than one LLM provider, Lynx calls all of them in parallel for every review. Each provider analyzes the same diff independently and posts its findings in its own section of a single PR comment. You get the benefit of multiple code-review perspectives without any extra workflow steps.
+
+## How parallel execution works
+
+Lynx uses `asyncio.gather` to fan out to all active providers simultaneously. A review record is created in the database for each provider before any LLM call is made. All calls proceed concurrently; the comment is posted only after every provider has responded (or failed).
+
+```python
+# From app/api/services/review.py
+reviews = await asyncio.gather(
+    *[process_single_review(api_key, review_record)
+      for api_key, review_record in review_records]
+)
+```
+
+This means a three-provider review takes roughly as long as the slowest single provider, not the sum of all three.
+
+## Provider emoji mapping
+
+Each provider is given a distinct emoji header in the combined comment so you can quickly tell responses apart:
+
+| Provider | Emoji | Section header |
+|----------|-------|----------------|
+| `openai` | 🤖 | `## 🤖 Openai Review` |
+| `gemini` | ✨ | `## ✨ Gemini Review` |
+| `anthropic` | 🧠 | `## 🧠 Anthropic Review` |
+
+## Output format
+
+All provider responses are assembled into a single Markdown comment with horizontal rules separating each section.
+
+```markdown
+# 🔍 Lynx Review
+
+## 🤖 Openai Review
+
+- 🔴 CRITICAL: Direct SQL interpolation on line 34 is vulnerable to injection.
+- 🟡 WARNING: Missing input validation on the `/upload` endpoint.
+
+---
+
+## ✨ Gemini Review
+
+- 🔴 CRITICAL: The JWT secret falls back to a hardcoded string when `JWT_SECRET`
+  is not set in the environment.
+- 🔵 SUGGESTION: The nested loop on line 89 is O(n²); a dict lookup would be O(n).
+
+---
+
+## 🧠 Anthropic Review
+
+- 🟡 WARNING: Error handler on line 102 catches `Exception` broadly and discards
+  the original traceback.
+- 🔵 SUGGESTION: Consider extracting the repeated date-formatting logic into a helper.
+
+---
+*Powered by Lynx AI Code Review*
+```
+
+## Enabling multi-agent reviews
+
+<Steps>
+  <Step title="Open Settings">
+    Go to **Settings → API Keys** in the Lynx dashboard.
+  </Step>
+  <Step title="Add a key for each provider">
+    Add an API key and select the model for each provider you want to use. You can add one, two, or all three providers.
+
+    Supported providers:
+    - **OpenAI** — e.g. `gpt-4o`, `gpt-4o-mini`
+    - **Gemini** — e.g. `gemini-2.0-flash`, `gemini-1.5-pro`
+    - **Anthropic** — e.g. `claude-opus-4-5`, `claude-sonnet-4-5`
+  </Step>
+  <Step title="Open a PR">
+    The next pull request you open will automatically receive reviews from all configured providers in one comment.
+  </Step>
+</Steps>
+
+<Note>
+  Only active API keys are used. You can disable a provider at any time from Settings without deleting the key — the key is stored encrypted and will not be called while inactive.
+</Note>
+
+## Independent perspectives
+
+Because each provider receives exactly the same diff and prompt, differences between their reviews reveal genuine disagreements about risk or quality. Common patterns:
+
+- One model flags a subtle logic error that another overlooks.
+- Security-focused models (Claude, GPT-4o) tend to surface injection risks; Gemini often catches performance anti-patterns.
+- A finding that appears across all three providers signals high confidence that it is a real issue.
+
+<Tip>
+  For security-sensitive codebases, use both **OpenAI GPT-4o** and **Anthropic Claude** together. For repositories with complex data pipelines or algorithmic code, add **Gemini** to catch N+1 queries and inefficient loop patterns that the other models sometimes miss.
+</Tip>
+
+## Cost and token tracking per provider
+
+Every provider call is recorded as a separate `Review` row. This means token usage and cost are tracked independently for each provider on each PR.
+
+| Field | Description |
+|-------|-------------|
+| `provider` | Which LLM generated this review (`openai`, `gemini`, `anthropic`) |
+| `model` | The specific model used (e.g. `gpt-4o-mini`) |
+| `prompt_tokens` | Input tokens consumed |
+| `completion_tokens` | Output tokens consumed |
+| `total_tokens` | Sum of prompt and completion tokens |
+| `cost` | Estimated USD cost for this provider's review |
+
+You can filter the review history by provider to compare spending across models:
+
+```http
+GET /api/v1/usage/reviews?provider=anthropic&status=success
+```
+
+## Failure isolation
+
+If one provider fails — due to an invalid API key, rate limit, or provider outage — the other providers still complete and their reviews are still posted. The failed provider's section shows `❌ Lynx review failed`, and its review record in the database is updated with `status: failed` and an `error_message`.
+
+This means a partial outage at one provider never blocks the rest of your review results.

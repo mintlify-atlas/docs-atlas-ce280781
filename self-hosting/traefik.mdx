@@ -1,0 +1,153 @@
+---
+title: "Set up Traefik reverse proxy for Lynx"
+description: "Configure Traefik as a reverse proxy for Lynx with automatic HTTPS certificates from Let's Encrypt using a Cloudflare DNS challenge."
+---
+
+Lynx's production Compose file (`docker-compose.yml`) is designed to sit behind a Traefik reverse proxy. Traefik handles TLS termination using Let's Encrypt certificates issued via Cloudflare DNS challenge, routes `yourdomain.com` to the frontend, and routes `yourdomain.com/api` to the backend—all without exposing raw ports to the internet.
+
+## How routing works
+
+| Path | Container | Entrypoint |
+|---|---|---|
+| `yourdomain.com` (any path) | `lynx-frontend` on port `80` | `websecure` (443) |
+| `yourdomain.com/api` (and subpaths) | `lynx-backend` on port `80` | `websecure` (443) |
+| `yourdomain.com` (HTTP) | — | Redirected to HTTPS automatically |
+
+The backend router uses `PathPrefix(\`/api\`)` so it matches before the frontend's lower-priority catch-all rule.
+
+## Networking
+
+Both `lynx-backend` and `lynx-frontend` are connected to two Docker networks:
+
+- `lynx-network` — internal communication between Lynx services
+- `proxy` — shared with Traefik for routing
+
+The `proxy` network is declared as `external: true` in `docker-compose.yml`, meaning you must create it manually before deploying.
+
+<Warning>
+  The `proxy` Docker network must exist before you run `docker compose up -d`. If it does not exist, Docker Compose will fail with a network not found error.
+</Warning>
+
+## Option 1: Deploy Traefik from the included file
+
+Lynx includes `docker-compose.traefik.yml` to spin up a pre-configured Traefik instance with Cloudflare DNS challenge support.
+
+### Required environment variables
+
+Add these to your `.env` file (they are already listed in `.env.example`):
+
+```bash
+# Your domain name
+DOMAIN_NAME=yourdomain.com
+
+# Email used for Let's Encrypt certificate registration
+SSL_EMAIL=you@example.com
+
+# Cloudflare DNS API token with Zone:DNS:Edit permissions
+CF_DNS_API_TOKEN=your-cloudflare-dns-api-token
+```
+
+<Note>
+  Traefik uses the Cloudflare DNS challenge to prove domain ownership to Let's Encrypt. This requires a Cloudflare API token with **Zone: DNS: Edit** permissions for your domain. The DNS challenge works even if your server is not publicly reachable on port 80 during issuance.
+</Note>
+
+### Deploy Traefik
+
+<Steps>
+  <Step title="Create the proxy network">
+    ```bash
+    docker network create proxy
+    ```
+  </Step>
+  <Step title="Start Traefik">
+    ```bash
+    docker compose -f docker-compose.traefik.yml up -d
+    ```
+    Traefik starts listening on ports `80` and `443`. Certificates are requested from Let's Encrypt and stored in `./letsencrypt/acme.json`.
+  </Step>
+  <Step title="Verify Traefik is running">
+    ```bash
+    docker compose -f docker-compose.traefik.yml ps
+    docker compose -f docker-compose.traefik.yml logs -f traefik
+    ```
+    Look for a line confirming the certificate resolver is ready.
+  </Step>
+  <Step title="Deploy Lynx">
+    ```bash
+    docker compose up -d
+    ```
+    Traefik discovers the Lynx containers via Docker labels and begins routing traffic.
+  </Step>
+</Steps>
+
+## Option 2: Use an existing Traefik instance
+
+If you already run Traefik on your host, you only need to:
+
+1. Ensure Traefik is connected to a Docker network named `proxy` (or update the label `traefik.docker.network` in `docker-compose.yml` to match your network name).
+2. Ensure your Traefik instance has a certificate resolver named `mytlschallenge` (or update the `tls.certresolver` labels accordingly).
+3. Create the `proxy` network if it does not exist, then run `docker compose up -d`.
+
+## Traefik labels reference
+
+These are the labels applied to `lynx-backend` in `docker-compose.yml`:
+
+```yaml
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.lynx-backend.rule=Host(`${DOMAIN_NAME}`) && PathPrefix(`/api`)"
+  - "traefik.http.routers.lynx-backend.entrypoints=websecure"
+  - "traefik.http.routers.lynx-backend.tls.certresolver=mytlschallenge"
+  - "traefik.http.services.lynx-backend.loadbalancer.server.port=80"
+  - "traefik.docker.network=proxy"
+```
+
+And for `lynx-frontend`:
+
+```yaml
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.lynx-frontend.rule=Host(`${DOMAIN_NAME}`)"
+  - "traefik.http.routers.lynx-frontend.entrypoints=websecure"
+  - "traefik.http.routers.lynx-frontend.tls.certresolver=mytlschallenge"
+  - "traefik.http.routers.lynx-frontend.priority=1"
+  - "traefik.http.services.lynx-frontend.loadbalancer.server.port=80"
+  - "traefik.docker.network=proxy"
+```
+
+The frontend router has `priority=1` (lower priority) so that the more-specific `/api` backend router takes precedence.
+
+## HTTPS redirect
+
+The included `docker-compose.traefik.yml` configures Traefik to redirect all HTTP traffic on port 80 to HTTPS:
+
+```yaml
+- "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+- "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+```
+
+This redirect is handled by Traefik before traffic reaches any Lynx container.
+
+## Production cookie settings
+
+When running behind HTTPS, set the following in your `.env`:
+
+```bash
+COOKIE_SECURE=True
+COOKIE_SAMESITE=none
+```
+
+<Warning>
+  `COOKIE_SECURE=True` requires the connection to be served over HTTPS. Setting it without a valid TLS certificate will prevent authentication cookies from being set, breaking login for all users.
+</Warning>
+
+## Certificate storage
+
+Traefik stores Let's Encrypt certificates in `./letsencrypt/acme.json` relative to where `docker-compose.traefik.yml` is run. This path is bind-mounted from the host:
+
+```yaml
+volumes:
+  - ./letsencrypt:/letsencrypt
+```
+
+Back up this file to avoid hitting Let's Encrypt rate limits when redeploying.

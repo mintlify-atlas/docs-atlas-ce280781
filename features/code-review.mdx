@@ -1,0 +1,227 @@
+---
+title: "Automated code review for every pull request"
+description: "Lynx automatically reviews GitHub pull requests and GitLab merge requests using AI the moment they open, or on demand via the /review comment command."
+---
+
+Lynx listens to webhook events from GitHub and GitLab and triggers an AI code review the moment a pull request or merge request is opened. Every review is posted directly as a comment on the PR, so your team sees feedback without leaving their normal workflow. You can also request a fresh review at any time by commenting `/review` on any open PR or MR.
+
+## How automatic review works
+
+When a PR is opened, GitHub or GitLab sends a webhook event to Lynx. Lynx extracts the diff, filters out irrelevant files, calls the configured LLM providers in parallel, and posts a single formatted comment back to the PR.
+
+<Steps>
+  <Step title="Webhook received">
+    GitHub sends a `pull_request` event with action `opened`, or GitLab sends a `merge_request` event with action `open`. Lynx verifies the webhook signature before processing.
+  </Step>
+  <Step title="Diff extracted">
+    Lynx fetches the list of changed files. Each file's patch is assembled into a structured diff. Files that match the skip rules are excluded before the diff is sent to any LLM.
+  </Step>
+  <Step title="LLM called">
+    All active providers (OpenAI, Gemini, Anthropic) are called in parallel using `asyncio.gather`. Each receives the same diff and the active prompt template.
+  </Step>
+  <Step title="Comment posted">
+    Lynx assembles the responses from all providers into a single Markdown comment and posts it to the PR via the GitHub or GitLab API.
+  </Step>
+</Steps>
+
+## Trigger modes
+
+<Tabs>
+  <Tab title="Automatic on PR open">
+    A review starts automatically whenever a PR or MR is opened. No action is required from contributors. Lynx uses the GitHub App installation token for GitHub repositories and your stored GitLab OAuth token for GitLab projects.
+
+    ```text
+    # GitHub event that triggers auto-review
+    X-Github-Event: pull_request
+    action: opened
+
+    # GitLab event that triggers auto-review
+    event_type: merge_request
+    action: open
+    ```
+  </Tab>
+  <Tab title="Manual via /review comment">
+    Post `/review` (case-insensitive) as a comment on any open PR or MR to trigger a review on demand. This is useful for re-reviewing after changes or for PRs that were already open when Lynx was installed.
+
+    ```text
+    /review
+    ```
+
+    Lynx matches the comment using `re.match(r"^/review\b", comment_body, re.IGNORECASE)`, so `/review` must appear at the start of the comment. Any text after it is ignored.
+  </Tab>
+</Tabs>
+
+## What Lynx reviews
+
+The default prompt instructs the LLM to focus only on issues that matter. Style and formatting are intentionally excluded.
+
+```text
+Focus on:
+1. Critical bugs and logic errors
+2. Security vulnerabilities (SQL injection, XSS, auth issues)
+3. Performance problems (N+1 queries, inefficient algorithms)
+4. Code smells that will cause maintainability issues
+```
+
+### Severity levels
+
+Every finding is tagged with one of three severity indicators:
+
+| Indicator | Label | Meaning |
+|-----------|-------|---------|
+| 🔴 | `CRITICAL` | Must fix before merge |
+| 🟡 | `WARNING` | Should fix soon |
+| 🔵 | `SUGGESTION` | Consider improving |
+
+## Files automatically skipped
+
+Lynx filters files before sending the diff to any LLM to reduce noise and cost.
+
+<AccordionGroup>
+  <Accordion title="Binary and media files">
+    Files with these extensions are always skipped:
+
+    ```text
+    Images:  .png .jpg .jpeg .gif .bmp .ico .svg .webp .tiff
+    Fonts:   .woff .woff2 .ttf .eot .otf
+    Binary:  .pyc .pyo .so .dll .dylib .exe .class .o .a .wasm
+    Archives: .zip .tar .gz .bz2 .7z .rar
+    Media:   .mp3 .mp4 .wav .avi .mov .pdf
+    Data/DB: .sqlite .db
+    ```
+  </Accordion>
+  <Accordion title="Lock files">
+    These exact filenames are always skipped regardless of their location:
+
+    ```text
+    package-lock.json  yarn.lock       pnpm-lock.yaml
+    Gemfile.lock       Pipfile.lock    poetry.lock
+    composer.lock      cargo.lock      go.sum
+    flake.lock         pubspec.lock    packages.lock.json
+    bun.lockb
+    ```
+  </Accordion>
+  <Accordion title="Minified and generated files">
+    Files whose names end with `.min.js`, `.min.css`, `.min.map`, or `.map` are skipped.
+  </Accordion>
+  <Accordion title="Generated directories">
+    Any file inside one of these directory segments is skipped:
+
+    ```text
+    node_modules   vendor   dist   build
+    __pycache__    .next    coverage   .git
+    ```
+  </Accordion>
+</AccordionGroup>
+
+Skipped files are listed in a collapsible section at the bottom of the review comment so you always know what was excluded.
+
+## Example review comment
+
+This is the format Lynx posts on a PR when two providers are configured:
+
+```markdown
+# 🔍 Lynx Review
+
+## 🤖 Openai Review
+
+- 🔴 CRITICAL: `execute(query)` on line 42 interpolates user input directly into the SQL
+  string. Use parameterised queries instead.
+- 🟡 WARNING: The authentication check in `login()` returns `True` for any non-empty
+  token without validating the signature.
+- 🔵 SUGGESTION: The loop in `process_items()` issues one database query per item.
+  Consider batching with an `IN` clause.
+
+---
+
+## 🧠 Anthropic Review
+
+- 🔴 CRITICAL: `render_template(user_input)` passes unsanitised input into the HTML
+  template, creating a reflected XSS vulnerability.
+- 🟡 WARNING: Exception handler on line 78 swallows all errors silently, making
+  debugging very difficult.
+
+<details>
+<summary>📁 2 file(s) skipped (lock files, generated/binary files)</summary>
+
+- `package-lock.json`
+- `dist/bundle.min.js`
+
+</details>
+
+---
+*Powered by Lynx AI Code Review*
+```
+
+## Review history
+
+Every review is stored in the database and accessible through the dashboard API.
+
+### List reviews
+
+```http
+GET /api/v1/usage/reviews
+```
+
+Supported query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `provider` | `openai` \| `gemini` \| `anthropic` | Filter by LLM provider |
+| `model` | string | Filter by model name |
+| `repo_name` | string | Filter by repository name |
+| `start_date` | datetime | Include reviews created on or after this date |
+| `end_date` | datetime | Include reviews created on or before this date |
+| `status` | `pending` \| `success` \| `failed` | Filter by review status |
+| `page` | integer (≥1) | Page number (default: 1) |
+| `limit` | integer (1–100) | Items per page (default: 10) |
+
+### Review statuses
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | The review has been queued but the LLM has not responded yet |
+| `success` | The LLM returned a review and it has been posted to the PR |
+| `failed` | The LLM call failed; see `error_message` for details |
+
+### Get a single review
+
+```http
+GET /api/v1/usage/reviews/{review_id}
+```
+
+## Token usage and cost tracking
+
+Lynx records token consumption and estimated USD cost for every successful review.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `prompt_tokens` | integer | Tokens consumed by the input (diff + prompt) |
+| `completion_tokens` | integer | Tokens consumed by the LLM response |
+| `total_tokens` | integer | Sum of prompt and completion tokens |
+| `cost` | float | Estimated cost in USD, calculated from per-million token pricing |
+
+Cost is calculated using the formula:
+
+```python
+input_cost_per_token = llm_model.input_cost_per_million / 1_000_000
+output_cost_per_token = llm_model.output_cost_per_million / 1_000_000
+
+cost = round(
+    prompt_tokens * input_cost_per_token
+    + completion_tokens * output_cost_per_token,
+    6,
+)
+```
+
+<Note>
+  Cost is recorded as `0.0` if the model is not found in Lynx's pricing table. Add models via the admin API to enable cost tracking.
+</Note>
+
+### Usage statistics
+
+```http
+GET /api/v1/usage/stats?window_days=7
+```
+
+Returns all-time totals (`total_reviews`, `successful_reviews`, `failed_reviews`, `total_tokens`, `total_cost`) plus period-over-period percentage changes for the rolling window you specify (1–90 days).

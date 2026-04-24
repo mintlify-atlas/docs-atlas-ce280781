@@ -1,0 +1,171 @@
+---
+title: "Deploy Lynx to production"
+description: "Deploy Lynx to production with Docker Compose. Choose between local dev, production with an existing Traefik instance, or a fresh Traefik setup with SSL."
+---
+
+Lynx ships with three Docker Compose configurations to cover the most common deployment scenarios — from a local development environment to a fully automated HTTPS setup via Traefik. Choose the option that matches your infrastructure.
+
+<Warning>
+  Before deploying to production, generate strong random values for `ENCRYPTION_KEY` and `JWT_SECRET`. Use `openssl rand -hex 32` for `JWT_SECRET`. For `ENCRYPTION_KEY`, generate a valid Fernet key with `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. These secrets protect stored LLM API keys and user sessions — do not use placeholder or default values.
+</Warning>
+
+<Tabs>
+  <Tab title="Local development">
+    The development Compose file (`docker-compose.dev.yml`) runs all services over plain HTTP on localhost. It is intended for local development and testing — not for exposing Lynx to the public internet.
+
+    **Environment variables to set in `.env`:**
+
+    ```bash .env
+    # GitHub App credentials
+    GITHUB_APP_ID=your_app_id
+    GITHUB_PRIVATE_KEY_PATH=/path/to/github-app-key.pem
+    GITHUB_WEBHOOK_SECRET=your_webhook_secret
+    GITHUB_CLIENT_ID=your_client_id
+    GITHUB_CLIENT_SECRET=your_client_secret
+
+    # Security
+    JWT_SECRET=your_jwt_secret
+    ENCRYPTION_KEY=your_fernet_key
+
+    # URLs
+    BACKEND_URL=http://localhost:8000
+    FRONTEND_URL=http://localhost:5173
+    ```
+
+    **Start Lynx:**
+
+    ```bash Terminal
+    docker-compose -f docker-compose.dev.yml up -d
+    ```
+
+    Once running, the frontend is available at `http://localhost:5173` and the backend API at `http://localhost:8000/api/v1`.
+
+    The development Compose file exposes port `5432` for direct PostgreSQL access, which is useful for local debugging.
+  </Tab>
+
+  <Tab title="Production with existing Traefik">
+    If you already have a Traefik instance running with an external `proxy` Docker network, use `docker-compose.yml`. Traefik handles TLS termination and routing — Lynx registers itself automatically via Docker labels.
+
+    **Additional environment variables required for production:**
+
+    ```bash .env
+    # Domain
+    DOMAIN_NAME=yourdomain.com
+    VITE_API_URL=https://yourdomain.com/api/v1
+
+    # URLs (must match your public domain)
+    BACKEND_URL=https://yourdomain.com/api/v1
+    FRONTEND_URL=https://yourdomain.com
+
+    # Cookie settings for HTTPS
+    COOKIE_SECURE=True
+    COOKIE_SAMESITE=lax
+
+    # GitHub App credentials
+    GITHUB_APP_ID=your_app_id
+    GITHUB_PRIVATE_KEY_PATH=/path/to/github-app-key.pem
+    GITHUB_WEBHOOK_SECRET=your_webhook_secret
+    GITHUB_CLIENT_ID=your_client_id
+    GITHUB_CLIENT_SECRET=your_client_secret
+
+    # Security
+    JWT_SECRET=your_jwt_secret
+    ENCRYPTION_KEY=your_fernet_key
+    ```
+
+    **Start Lynx:**
+
+    ```bash Terminal
+    docker-compose up -d
+    ```
+
+    Traefik will route `https://yourdomain.com` to the frontend and `https://yourdomain.com/api` to the backend, with TLS certificates managed automatically via the `mytlschallenge` cert resolver configured in your existing Traefik instance.
+
+    <Note>
+      The `proxy` Docker network must already exist and be the network your Traefik instance is connected to. Lynx joins both `lynx-network` (internal) and `proxy` (external) so Traefik can discover the containers.
+    </Note>
+  </Tab>
+
+  <Tab title="Production with fresh Traefik">
+    If you do not have a Traefik instance yet, deploy one first using `docker-compose.traefik.yml`. This configuration uses Cloudflare DNS challenge for automatic TLS certificate provisioning via Let's Encrypt.
+
+    **Step 1: Set the Traefik environment variables in `.env`:**
+
+    ```bash .env
+    # Let's Encrypt registration email
+    SSL_EMAIL=your@email.com
+
+    # Your public domain
+    DOMAIN_NAME=yourdomain.com
+
+    # Cloudflare API token with DNS:Edit permission
+    CF_DNS_API_TOKEN=your_cloudflare_api_token
+    ```
+
+    **Step 2: Start Traefik:**
+
+    ```bash Terminal
+    docker-compose -f docker-compose.traefik.yml up -d
+    ```
+
+    This creates the `proxy` Docker network and starts Traefik with Let's Encrypt DNS challenge via Cloudflare. Certificates are stored in `./letsencrypt/acme.json` and renewed automatically.
+
+    **Step 3: Deploy Lynx using the production Compose file.**
+
+    Add the remaining production variables to `.env` (same as the "Production with existing Traefik" tab), then run:
+
+    ```bash Terminal
+    docker-compose up -d
+    ```
+
+    <Note>
+      The Cloudflare DNS token needs the **Zone → DNS → Edit** permission scoped to your domain. DNS challenge is used instead of HTTP challenge, which means TLS provisioning works even before your DNS has fully propagated.
+    </Note>
+
+    <Info>
+      If you use a DNS provider other than Cloudflare, replace the `dnschallenge.provider` value in `docker-compose.traefik.yml` and provide the corresponding environment variables for that provider. See the [Traefik ACME DNS challenge documentation](https://doc.traefik.io/traefik/https/acme/#dnschallenge) for supported providers.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Verifying your deployment
+
+After starting Lynx, confirm all services are running and healthy:
+
+```bash Terminal
+docker-compose ps
+```
+
+All three containers — `lynx-backend`, `lynx-frontend`, and `lynx-db` — should show a status of `running`. The backend waits for a healthy PostgreSQL connection before starting, so if the backend exits on first launch, check the database logs:
+
+```bash Terminal
+docker-compose logs lynx-db
+docker-compose logs lynx-backend
+```
+
+## Updating Lynx
+
+To update to a newer version, pull the latest code and rebuild the images:
+
+```bash Terminal
+git pull
+docker-compose -f docker-compose.dev.yml build   # or docker-compose build for production
+docker-compose -f docker-compose.dev.yml up -d   # or docker-compose up -d for production
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure GitHub App" icon="github" href="/configuration/github-app">
+    Create and install the GitHub App to start receiving PR webhook events.
+  </Card>
+  <Card title="Configure GitLab" icon="gitlab" href="/configuration/gitlab">
+    Set up GitLab webhooks for cloud or self-hosted GitLab instances.
+  </Card>
+  <Card title="Environment variables" icon="sliders" href="/configuration/environment">
+    Full reference for all supported environment variables and their defaults.
+  </Card>
+  <Card title="Traefik setup" icon="network-wired" href="/self-hosting/traefik">
+    Detailed guide to Traefik configuration and certificate management.
+  </Card>
+</CardGroup>
